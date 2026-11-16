@@ -6,3 +6,7 @@ export const CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const SHEET_MAX_ROWS = 5000;
 export const SHEET_AUTOLOAD_MAX_BYTES = 20 * 1024 * 1024;
 export const SHEET_MAX_COLS = 200;
+/** Chat cards play files up to this size directly; larger audio/video goes through a preview. */
+export const DIRECT_PLAY_MAX_BYTES = 4 * 1024 * 1024;
+export const PREVIEW_TIMEOUT_MS = 180_000;
+export const PREVIEW_MAX_HEIGHT = 540;

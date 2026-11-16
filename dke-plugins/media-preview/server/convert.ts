@@ -37,8 +37,21 @@ export class NotConvertibleError extends Error {
 /** Re-validates a queued input right before conversion; returns the path to convert. */
 export type InputCheck = (input: string) => Promise<string>;
 
+/** Where a queue's result lives in the cache and how to find it in the converter's outDir. */
+export interface QueueOutput {
+  /** Cache file suffix for an input, e.g. ".pdf" or ".preview.mp4". */
+  suffix: (input: string) => string;
+  /** Locates the converter's output inside its temporary outDir. */
+  find: (outDir: string, input: string) => Promise<string | null>;
+  /** Mixed into the cache key so different outputs of one file never share a key. */
+  keySalt?: string;
+  /** Names the output in the "finished without output" error. */
+  label: string;
+}
+
 interface Job {
   input: string;
+  suffix: string;
   recheck?: InputCheck;
   state: ConvertState;
   error?: string;
@@ -70,6 +83,12 @@ export async function findPdf(outDir: string, input: string): Promise<string | n
   return pdfs.length === 1 ? path.join(outDir, pdfs[0]) : null;
 }
 
+export const PDF_OUTPUT: QueueOutput = {
+  suffix: () => ".pdf",
+  find: findPdf,
+  label: "berkas PDF",
+};
+
 /**
  * Starts `work` unless already aborted, and rejects as soon as `signal`
  * aborts even if the converter ignores the signal.
@@ -91,6 +110,7 @@ export class ConversionQueue {
   private readonly runConverter: Converter;
   private readonly timeoutMs: number;
   private readonly maxCacheBytes: number;
+  private readonly output: QueueOutput;
   private readonly jobs = new Map<string, Job>();
   private readonly pending: string[] = [];
   private running = false;
@@ -101,15 +121,17 @@ export class ConversionQueue {
     runConverter: Converter;
     timeoutMs: number;
     maxCacheBytes?: number;
+    output?: QueueOutput;
   }) {
     this.cacheDir = opts.cacheDir;
     this.runConverter = opts.runConverter;
     this.timeoutMs = opts.timeoutMs;
     this.maxCacheBytes = opts.maxCacheBytes ?? CACHE_MAX_BYTES;
+    this.output = opts.output ?? PDF_OUTPUT;
   }
 
-  private cachedPdf(key: string): string {
-    return path.join(this.cacheDir, `${key}.pdf`);
+  private cachedOutput(key: string, suffix: string): string {
+    return path.join(this.cacheDir, `${key}${suffix}`);
   }
 
   private activeJob(key: string): boolean {
@@ -123,10 +145,11 @@ export class ConversionQueue {
   ): Promise<{ jobId: string; cached: boolean }> {
     const info = await stat(realPath);
     if (!info.isFile()) throw new NotRegularFileError();
-    const key = cacheKey(realPath, info.size, info.mtimeMs);
+    const key = cacheKey(realPath, info.size, info.mtimeMs, this.output.keySalt);
     if (this.activeJob(key)) return { jobId: key, cached: false };
 
-    const pdf = this.cachedPdf(key);
+    const suffix = this.output.suffix(realPath);
+    const pdf = this.cachedOutput(key, suffix);
     let cachedSize: number | null = null;
     try {
       const cached = await stat(pdf);
@@ -142,11 +165,12 @@ export class ConversionQueue {
     // Re-check after the awaits: a concurrent start may have queued the job.
     if (this.activeJob(key)) return { jobId: key, cached: false };
     if (cachedSize !== null) {
-      this.jobs.set(key, { input: realPath, state: "done", size: cachedSize });
+      this.jobs.set(key, { input: realPath, suffix, state: "done", size: cachedSize });
       return { jobId: key, cached: true };
     }
     this.jobs.set(key, {
       input: realPath,
+      suffix,
       state: "queued",
       ...(opts.recheck ? { recheck: opts.recheck } : {}),
     });
@@ -182,11 +206,15 @@ export class ConversionQueue {
     }
   }
 
-  pdfPath(jobId: string): string {
+  outputPath(jobId: string): string {
     const job = this.jobs.get(jobId);
     if (!job) throw new UnknownJobError();
     if (job.state !== "done") throw new Error("Konversi belum selesai");
-    return this.cachedPdf(jobId);
+    return this.cachedOutput(jobId, job.suffix);
+  }
+
+  pdfPath(jobId: string): string {
+    return this.outputPath(jobId);
   }
 
   /** Aborts the running conversion and drops queued ones (plugin unload). */
@@ -217,17 +245,17 @@ export class ConversionQueue {
       outDir = await mkdtemp(path.join(this.cacheDir, "tmp-"));
       const dir = outDir;
       await runAbortable(() => this.runConverter(input, dir, controller.signal), controller.signal);
-      const produced = await findPdf(outDir, input);
-      if (!produced) throw new Error("Konversi selesai tanpa berkas PDF");
-      const target = this.cachedPdf(key);
+      const produced = await this.output.find(outDir, input);
+      if (!produced) throw new Error(`Konversi selesai tanpa ${this.output.label}`);
+      const target = this.cachedOutput(key, job.suffix);
       await rename(produced, target);
       const size = (await stat(target)).size;
       if (job.state === "running") {
         job.state = "done";
         job.size = size;
       }
-      // Prune only after the new PDF is in place, and never the new PDF itself.
-      await pruneCache(this.cacheDir, this.maxCacheBytes, [`${key}.pdf`]).catch(() => {});
+      // Prune only after the new output is in place, and never the new output itself.
+      await pruneCache(this.cacheDir, this.maxCacheBytes, [`${key}${job.suffix}`]).catch(() => {});
     } catch (error) {
       if (job.state === "running") {
         job.state = "error";
@@ -247,83 +275,102 @@ export class ConversionQueue {
 }
 
 /**
- * Runs `nice -n 10 soffice --headless --convert-to pdf` in its own process
- * group (detached) so abort can SIGKILL soffice and every helper it spawned.
- * A private -env:UserInstallation profile keeps headless conversion working
- * while a LibreOffice GUI instance is open.
+ * Runs `nice -n 10 <binary> <args>` in its own process group (detached) so abort can SIGKILL
+ * the tool and every helper it spawned. Resolves on exit 0 with the captured stderr tail.
+ */
+export function runNicedDetached(
+  binary: string,
+  args: readonly string[],
+  signal: AbortSignal,
+  name: string,
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    if (signal.aborted) return reject(new Error("Konversi dihentikan"));
+    const child = spawn(NICE_BIN, ["-n", "10", binary, ...args], {
+      detached: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(stderr.trim());
+    };
+    const onAbort = () => {
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // Group already gone.
+        }
+      }
+      finish(new Error("Konversi dihentikan"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (data: string) => {
+      stderr = (stderr + data).slice(-STDERR_MAX_CHARS);
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code, sig) => {
+      if (code !== 0) {
+        finish(new Error(`${name} gagal (kode ${code ?? sig}): ${stderr.trim()}`));
+        return;
+      }
+      finish();
+    });
+  });
+}
+
+/**
+ * Runs `soffice --headless --convert-to pdf` via runNicedDetached. A private
+ * -env:UserInstallation profile keeps headless conversion working while a LibreOffice GUI
+ * instance is open.
  */
 export function createSofficeRunner(opts: { cacheDir: string; binary?: string }): Converter {
   const binary = opts.binary ?? SOFFICE_BIN;
   const profileUrl = pathToFileURL(path.join(opts.cacheDir, "lo-profile")).href;
-  return (input, outDir, signal) =>
-    new Promise<void>((resolve, reject) => {
-      if (signal.aborted) return reject(new Error("Konversi dihentikan"));
-      const child = spawn(
-        NICE_BIN,
-        [
-          "-n",
-          "10",
-          binary,
-          "--headless",
-          `-env:UserInstallation=${profileUrl}`,
-          "--convert-to",
-          "pdf",
-          "--outdir",
-          outDir,
-          input,
-        ],
-        { detached: true, stdio: ["ignore", "ignore", "pipe"] },
-      );
-      let stderr = "";
-      let settled = false;
-      const finish = (error?: Error) => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", onAbort);
-        if (error) reject(error);
-        else resolve();
-      };
-      const onAbort = () => {
-        if (child.pid !== undefined) {
-          try {
-            process.kill(-child.pid, "SIGKILL");
-          } catch {
-            // Group already gone.
-          }
-        }
-        finish(new Error("Konversi dihentikan"));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (data: string) => {
-        stderr = (stderr + data).slice(-STDERR_MAX_CHARS);
-      });
-      child.on("error", (error) => finish(error));
-      child.on("close", (code, sig) => {
-        if (settled) return;
-        if (code !== 0) {
-          finish(new Error(`soffice gagal (kode ${code ?? sig}): ${stderr.trim()}`));
-          return;
-        }
-        findPdf(outDir, input).then(
-          (pdf) =>
-            finish(pdf ? undefined : new Error(`soffice tidak menghasilkan PDF: ${stderr.trim()}`)),
-          (error: unknown) => finish(error instanceof Error ? error : new Error(String(error))),
-        );
-      });
-    });
+  return async (input, outDir, signal) => {
+    const stderr = await runNicedDetached(
+      binary,
+      [
+        "--headless",
+        `-env:UserInstallation=${profileUrl}`,
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        outDir,
+        input,
+      ],
+      signal,
+      "soffice",
+    );
+    if (!(await findPdf(outDir, input))) {
+      throw new Error(`soffice tidak menghasilkan PDF: ${stderr}`);
+    }
+  };
 }
 
 export const runSoffice: Converter = (input, outDir, signal) =>
   createSofficeRunner({ cacheDir: defaultCacheDir() })(input, outDir, signal);
 
-export function createConvertHandlers(getRoots: () => Promise<string[]>, queue: ConversionQueue) {
+/**
+ * start/status/cancel/read handlers for one queue. `checkKind` throws for files this queue
+ * must not process; it runs on the resolved path at start and again right before spawning.
+ */
+export function createJobHandlers(
+  getRoots: () => Promise<string[]>,
+  queue: ConversionQueue,
+  checkKind: (realPath: string) => void,
+) {
   return {
     async start({ path: target }: { path: string }) {
       const allowed = async (candidate: string): Promise<string> => {
         const real = await resolveAllowedPath(candidate, await getRoots());
-        const kind = fileKind(real);
-        if (kind !== "office" && kind !== "sheet") throw new NotConvertibleError();
+        checkKind(real);
         return real;
       };
       return queue.start(await allowed(target), { recheck: allowed });
@@ -342,9 +389,9 @@ export function createConvertHandlers(getRoots: () => Promise<string[]>, queue: 
       return {};
     },
     async read({ jobId, offset }: { jobId: string; offset: number }) {
-      const pdf = queue.pdfPath(jobId);
+      const output = queue.outputPath(jobId);
       try {
-        return await readFileChunk(pdf, offset);
+        return await readFileChunk(output, offset);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           throw new Error("Hasil konversi sudah tidak ada di cache; mulai ulang konversi", {
@@ -355,4 +402,11 @@ export function createConvertHandlers(getRoots: () => Promise<string[]>, queue: 
       }
     },
   };
+}
+
+export function createConvertHandlers(getRoots: () => Promise<string[]>, queue: ConversionQueue) {
+  return createJobHandlers(getRoots, queue, (real) => {
+    const kind = fileKind(real);
+    if (kind !== "office" && kind !== "sheet") throw new NotConvertibleError();
+  });
 }

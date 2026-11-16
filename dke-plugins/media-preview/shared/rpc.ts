@@ -21,14 +21,16 @@ export const convertStart = defineRpc({
   output: z.object({ jobId: z.string(), cached: z.boolean() }),
 });
 
+const jobStatusOutput = z.object({
+  state: z.enum(["queued", "running", "done", "error", "cancelled"]),
+  error: z.string().optional(),
+  size: z.number().optional(),
+});
+
 export const convertStatus = defineRpc({
   name: "dke-media.convert.status",
   input: z.object({ jobId: z.string() }),
-  output: z.object({
-    state: z.enum(["queued", "running", "done", "error", "cancelled"]),
-    error: z.string().optional(),
-    size: z.number().optional(),
-  }),
+  output: jobStatusOutput,
 });
 
 export const convertCancel = defineRpc({
@@ -40,6 +42,31 @@ export const convertCancel = defineRpc({
 
 export const convertRead = defineRpc({
   name: "dke-media.convert.read",
+  input: z.object({ jobId: z.string(), offset: z.number().int().nonnegative() }),
+  output: chunkOutput,
+});
+
+/** Lightweight ffmpeg preview (mp4 540p / mp3) of a large audio or video file for chat cards. */
+export const previewStart = defineRpc({
+  name: "dke-media.preview.start",
+  input: z.object({ path: z.string() }),
+  output: z.object({ jobId: z.string(), cached: z.boolean() }),
+});
+
+export const previewStatus = defineRpc({
+  name: "dke-media.preview.status",
+  input: z.object({ jobId: z.string() }),
+  output: jobStatusOutput,
+});
+
+export const previewCancel = defineRpc({
+  name: "dke-media.preview.cancel",
+  input: z.object({ jobId: z.string(), onlyIfQueued: z.boolean().optional() }),
+  output: z.object({}),
+});
+
+export const previewRead = defineRpc({
+  name: "dke-media.preview.read",
   input: z.object({ jobId: z.string(), offset: z.number().int().nonnegative() }),
   output: chunkOutput,
 });

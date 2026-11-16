@@ -66,3 +66,19 @@ describe("pruneCache", () => {
     await expect(pruneCache(path.join(dir, "missing"), 10)).resolves.toBeUndefined();
   });
 });
+
+describe("pruneCache with previews", () => {
+  it("counts and evicts preview mp4/mp3 alongside pdfs, but not other files", async () => {
+    await writePdf("a.preview.mp4", 100, 1_000);
+    await writePdf("b.preview.mp3", 100, 2_000);
+    await writePdf("c.pdf", 100, 3_000);
+    await writePdf("film.mp4", 500, 500);
+    await pruneCache(dir, 150);
+    expect((await readdir(dir)).sort()).toEqual(["c.pdf", "film.mp4"]);
+  });
+
+  it("cacheKey salt changes the key and no salt keeps the old key", () => {
+    expect(cacheKey("/a/b.mp4", 10, 1, "preview")).not.toBe(cacheKey("/a/b.mp4", 10, 1));
+    expect(cacheKey("/a/b.mp4", 10, 1, "")).toBe(cacheKey("/a/b.mp4", 10, 1));
+  });
+});

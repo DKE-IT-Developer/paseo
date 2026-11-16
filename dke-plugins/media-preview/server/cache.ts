@@ -15,14 +15,25 @@ export function defaultCacheDir(): string {
   return cacheDirFor(process.env, os.homedir());
 }
 
-export function cacheKey(realPath: string, size: number, mtimeMs: number): string {
-  return createHash("sha256").update(`${realPath}\0${size}\0${mtimeMs}`).digest("hex");
+/**
+ * `salt` separates outputs of the same file (e.g. "preview"); without it the key is the
+ * original PDF key, so existing cached PDFs stay valid.
+ */
+export function cacheKey(realPath: string, size: number, mtimeMs: number, salt = ""): string {
+  const base = `${realPath}\0${size}\0${mtimeMs}`;
+  return createHash("sha256")
+    .update(salt ? `${base}\0${salt}` : base)
+    .digest("hex");
 }
 
+/** Cached outputs that count toward (and are evicted by) pruneCache. */
+const CACHED_SUFFIXES = [".pdf", ".preview.mp4", ".preview.mp3"];
+
 /**
- * Deletes top-level `*.pdf` files in `dir`, least recently accessed first,
+ * Deletes top-level cached outputs (`*.pdf`, `*.preview.mp4|mp3`) in `dir`, least recently
+ * accessed first,
  * until their total size is at most `maxBytes`. Names in `exclude` are never
- * deleted (the PDF a caller has just produced or is about to serve).
+ * deleted (the output a caller has just produced or is about to serve).
  */
 export async function pruneCache(
   dir: string,
@@ -38,7 +49,7 @@ export async function pruneCache(
   }
   const files: { name: string; size: number; atimeMs: number }[] = [];
   for (const name of names) {
-    if (!name.endsWith(".pdf")) continue;
+    if (!CACHED_SUFFIXES.some((suffix) => name.endsWith(suffix))) continue;
     try {
       const info = await stat(path.join(dir, name));
       if (info.isFile()) files.push({ name, size: info.size, atimeMs: info.atimeMs });
