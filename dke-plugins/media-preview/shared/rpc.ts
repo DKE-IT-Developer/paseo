@@ -33,7 +33,8 @@ export const convertStatus = defineRpc({
 
 export const convertCancel = defineRpc({
   name: "dke-media.convert.cancel",
-  input: z.object({ jobId: z.string() }),
+  // onlyIfQueued is optional so older clients that send only jobId keep working.
+  input: z.object({ jobId: z.string(), onlyIfQueued: z.boolean().optional() }),
   output: z.object({}),
 });
 

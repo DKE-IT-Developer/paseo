@@ -211,6 +211,28 @@ describe("ConversionQueue", () => {
     await waitState(again, r.jobId, "done");
   });
 
+  it("cancel with onlyIfQueued leaves a running job running and cancels a queued one", async () => {
+    const a = await doc("a.docx");
+    const b = await doc("b.docx");
+    const release = gate();
+    const converter = vi.fn<Converter>(async (input, outDir) => {
+      await release.promise;
+      await writesPdf(input, outDir, new AbortController().signal);
+    });
+    const q = makeQueue(converter);
+    const ja = await q.start(a);
+    const jb = await q.start(b);
+    await waitState(q, ja.jobId, "running");
+    q.cancel(ja.jobId, { onlyIfQueued: true });
+    q.cancel(jb.jobId, { onlyIfQueued: true });
+    expect(q.status(ja.jobId).state).toBe("running");
+    expect(q.status(jb.jobId).state).toBe("cancelled");
+    release.release();
+    await waitState(q, ja.jobId, "done");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(converter).toHaveBeenCalledTimes(1);
+  });
+
   it("cancel during setup never starts the converter", async () => {
     const file = await doc("a.docx");
     const converter = vi.fn(writesPdf);
@@ -305,6 +327,7 @@ describe("createConvertHandlers", () => {
     expect(chunk).toMatchObject({ nextOffset: 14, eof: true });
     expect(h.status({ jobId })).toEqual({ state: "done", size: 14 });
     expect(h.cancel({ jobId })).toEqual({});
+    expect(h.cancel({ jobId, onlyIfQueued: true })).toEqual({});
   });
 
   it("read of unknown or unfinished job throws", async () => {

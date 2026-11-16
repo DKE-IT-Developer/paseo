@@ -9,7 +9,7 @@ import { shouldAutoLoad } from "../autoload";
 import { revokeBlobUrl, toBlobUrl } from "../blob-url";
 import { ErrorText, SizeGate } from "../size-gate";
 import { SPACING } from "../ui-spacing";
-import { runOfficeConversion } from "./office-run";
+import { JobCanceller, runOfficeConversion } from "./office-run";
 import { officeReducer } from "./office-state";
 
 const POLL_INTERVAL_MS = 1000;
@@ -61,8 +61,8 @@ export function OfficeFlow({ file, theme }: { file: PluginFile; theme: PluginThe
   const [state, dispatch] = useReducer(officeReducer, { phase: "idle" });
   const [attempt, setAttempt] = useState(0);
   const [url, setUrl] = useState<string | null>(null);
-  const jobRef = useRef<string | null>(null);
   const stopCurrentRef = useRef<(() => void) | null>(null);
+  const cancellerRef = useRef<JobCanceller | null>(null);
 
   useEffect(() => {
     // Per-run flag: a later run (after "Coba lagi") can never revive this one.
@@ -71,6 +71,9 @@ export function OfficeFlow({ file, theme }: { file: PluginFile; theme: PluginThe
     stopCurrentRef.current = () => {
       stopped = true;
     };
+    // One canceller per run; the cancel RPC is read at send time so it stays current.
+    const canceller = new JobCanceller((input) => rpcRef.current.cancel(input));
+    cancellerRef.current = canceller;
     const rpc = rpcRef.current;
     void runOfficeConversion(
       {
@@ -78,9 +81,8 @@ export function OfficeFlow({ file, theme }: { file: PluginFile; theme: PluginThe
         maxBytes: PANEL_AUTOLOAD_MAX_BYTES,
         rpc: { start: rpc.start, status: rpc.status, read: rpc.read },
         dispatch,
-        onJobId: (jobId) => {
-          jobRef.current = jobId;
-        },
+        onJobId: (jobId) => canceller.jobStarted(jobId),
+        onSettled: () => canceller.jobSettled(),
         onUrl: (blobUrl) => {
           created = blobUrl;
           setUrl(blobUrl);
@@ -94,6 +96,8 @@ export function OfficeFlow({ file, theme }: { file: PluginFile; theme: PluginThe
     );
     return () => {
       stopped = true;
+      // Leaving the file (unmount, other file, retry) drops the job only while it is queued.
+      canceller.abandon();
       if (created) revokeBlobUrl(created);
       setUrl(null);
     };
@@ -102,8 +106,8 @@ export function OfficeFlow({ file, theme }: { file: PluginFile; theme: PluginThe
   const onCancel = useCallback(() => {
     stopCurrentRef.current?.();
     dispatch({ type: "cancel" });
-    const jobId = jobRef.current;
-    if (jobId) void rpcRef.current.cancel({ jobId }).catch(() => undefined);
+    // Sent now, or as soon as start returns the jobId.
+    cancellerRef.current?.cancel();
   }, []);
   const onRetry = useCallback(() => {
     dispatch({ type: "retry" });

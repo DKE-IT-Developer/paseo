@@ -153,9 +153,14 @@ export class ConversionQueue {
     return out;
   }
 
-  cancel(jobId: string): void {
+  /**
+   * `onlyIfQueued` (sent when a panel is abandoned) leaves a running job alone: jobs are
+   * deduped per file, so another panel may be waiting for it, and its PDF lands in the cache.
+   */
+  cancel(jobId: string, opts: { onlyIfQueued?: boolean } = {}): void {
     const job = this.jobs.get(jobId);
     if (!job) return;
+    if (opts.onlyIfQueued && job.state !== "queued") return;
     if (job.state === "queued") {
       job.state = "cancelled";
       const index = this.pending.indexOf(jobId);
@@ -312,8 +317,14 @@ export function createConvertHandlers(getRoots: () => Promise<string[]>, queue: 
     status({ jobId }: { jobId: string }): ConvertStatus {
       return queue.status(jobId);
     },
-    cancel({ jobId }: { jobId: string }): Record<string, never> {
-      queue.cancel(jobId);
+    cancel({
+      jobId,
+      onlyIfQueued,
+    }: {
+      jobId: string;
+      onlyIfQueued?: boolean;
+    }): Record<string, never> {
+      queue.cancel(jobId, { onlyIfQueued: onlyIfQueued === true });
       return {};
     },
     async read({ jobId, offset }: { jobId: string; offset: number }) {

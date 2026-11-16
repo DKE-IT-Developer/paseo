@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { type OfficeRunDeps, runOfficeConversion } from "./office-run";
+import { JobCanceller, type OfficeRunDeps, runOfficeConversion } from "./office-run";
 import type { OfficeEvent } from "./office-state";
 
 function deferred<T>() {
@@ -125,5 +125,122 @@ describe("runOfficeConversion", () => {
     );
     expect(start).toHaveBeenCalledTimes(2);
     expect(events.at(-1)?.type).toBe("loaded");
+  });
+});
+
+describe("JobCanceller with runOfficeConversion", () => {
+  function wired(canceller: JobCanceller, over: Partial<OfficeRunDeps> = {}) {
+    return makeDeps({
+      events: [],
+      onJobId: (jobId) => canceller.jobStarted(jobId),
+      onSettled: () => canceller.jobSettled(),
+      ...over,
+    });
+  }
+
+  it("Batal before start returns is delivered once the jobId arrives", async () => {
+    const send = vi.fn(async () => ({}));
+    const canceller = new JobCanceller(send);
+    const started = deferred<{ jobId: string }>();
+    let stopped = false;
+    const run = runOfficeConversion(
+      wired(canceller, {
+        rpc: {
+          start: () => started.promise,
+          status: async () => ({ state: "queued" }),
+          read: async () => ({ base64: "", nextOffset: 0, eof: true }),
+        },
+      }),
+      () => stopped,
+    );
+    await flush();
+    // User presses "Batal": the run is stopped and the cancel intent recorded.
+    stopped = true;
+    canceller.cancel();
+    expect(send).not.toHaveBeenCalled();
+    started.resolve({ jobId: "j1" });
+    await run;
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ jobId: "j1" });
+  });
+
+  it("unmount while queued sends an onlyIfQueued cancel", async () => {
+    const send = vi.fn(async () => ({}));
+    const canceller = new JobCanceller(send);
+    const polled = deferred<void>();
+    const never = new Promise<void>(() => {});
+    let stopped = false;
+    const run = runOfficeConversion(
+      wired(canceller, {
+        rpc: {
+          start: async () => ({ jobId: "j2" }),
+          status: async () => ({ state: "queued" }),
+          read: async () => ({ base64: "", nextOffset: 0, eof: true }),
+        },
+        sleep: () => {
+          polled.resolve();
+          return never;
+        },
+      }),
+      () => stopped,
+    );
+    await polled.promise;
+    stopped = true;
+    canceller.abandon();
+    canceller.abandon();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ jobId: "j2", onlyIfQueued: true });
+    void run;
+  });
+
+  it("unmount before start returns sends onlyIfQueued once the jobId arrives", async () => {
+    const send = vi.fn(async () => ({}));
+    const canceller = new JobCanceller(send);
+    const started = deferred<{ jobId: string }>();
+    let stopped = false;
+    const run = runOfficeConversion(
+      wired(canceller, {
+        rpc: {
+          start: () => started.promise,
+          status: async () => ({ state: "queued" }),
+          read: async () => ({ base64: "", nextOffset: 0, eof: true }),
+        },
+      }),
+      () => stopped,
+    );
+    await flush();
+    stopped = true;
+    canceller.abandon();
+    started.resolve({ jobId: "j3" });
+    await run;
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ jobId: "j3", onlyIfQueued: true });
+  });
+
+  it("unmount after the job finished sends nothing", async () => {
+    const send = vi.fn(async () => ({}));
+    const canceller = new JobCanceller(send);
+    await runOfficeConversion(wired(canceller), () => false);
+    canceller.abandon();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("explicit Batal then unmount sends a single full cancel", async () => {
+    const send = vi.fn(async () => ({}));
+    const canceller = new JobCanceller(send);
+    canceller.jobStarted("j4");
+    canceller.cancel();
+    canceller.abandon();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({ jobId: "j4" });
+  });
+
+  it("a failing cancel RPC does not reject", async () => {
+    const canceller = new JobCanceller(async () => {
+      throw new Error("offline");
+    });
+    canceller.jobStarted("j5");
+    expect(() => canceller.cancel()).not.toThrow();
+    await flush();
   });
 });
