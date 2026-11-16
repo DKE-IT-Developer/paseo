@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -59,6 +60,21 @@ describe("read", () => {
     await mkdir(dir);
     await expect(handlers.stat({ path: dir })).rejects.toThrow("Bukan berkas biasa");
     await expect(handlers.read({ path: dir, offset: 0 })).rejects.toThrow("Bukan berkas biasa");
+  });
+
+  it("rejects files that are not a media kind", async () => {
+    const file = path.join(root, "notes.txt");
+    await writeFile(file, "secret");
+    await expect(handlers.stat({ path: file })).rejects.toThrow("Jenis berkas tidak didukung");
+    await expect(handlers.read({ path: file, offset: 0 })).rejects.toThrow(
+      "Jenis berkas tidak didukung",
+    );
+  });
+
+  it("rejects a fifo without blocking", async () => {
+    const fifo = path.join(root, "pipe.mp3");
+    execFileSync("mkfifo", [fifo]);
+    await expect(handlers.read({ path: fifo, offset: 0 })).rejects.toThrow("Bukan berkas biasa");
   });
 
   it("returns eof for offset at or past end", async () => {

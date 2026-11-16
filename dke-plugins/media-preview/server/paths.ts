@@ -45,3 +45,15 @@ export async function resolveAllowedPath(target: string, roots: string[]): Promi
   }
   throw new PathNotAllowedError();
 }
+
+/** Workspace dirs from `paseo.workspaces.list()` entries; skips missing or empty values. */
+export function workspaceDirsFrom(
+  entries: ReadonlyArray<{ workspaceDirectory?: unknown }>,
+): string[] {
+  const dirs: string[] = [];
+  for (const entry of entries) {
+    const dir = entry.workspaceDirectory;
+    if (typeof dir === "string" && dir.length > 0) dirs.push(dir);
+  }
+  return dirs;
+}

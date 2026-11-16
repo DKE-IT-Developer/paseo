@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fileKind } from "../shared/kinds";
-import { PathNotAllowedError, allowedRoots, resolveAllowedPath } from "./paths";
+import { PathNotAllowedError, allowedRoots, resolveAllowedPath, workspaceDirsFrom } from "./paths";
 
 let base: string;
 let root: string;
@@ -89,6 +89,21 @@ describe("allowedRoots filtering", () => {
     expect(roots).not.toContain("//");
     expect(roots).not.toContain("relative/dir");
     expect(roots).not.toContain("");
+  });
+});
+
+describe("workspaceDirsFrom", () => {
+  it("skips entries whose workspaceDirectory is not a non-empty string", () => {
+    const entries = [
+      { workspaceDirectory: "/a" },
+      { workspaceDirectory: "" },
+      { workspaceDirectory: null },
+      { workspaceDirectory: undefined },
+      { workspaceDirectory: 42 },
+      {},
+      { workspaceDirectory: "/b" },
+    ];
+    expect(workspaceDirsFrom(entries)).toEqual(["/a", "/b"]);
   });
 });
 
