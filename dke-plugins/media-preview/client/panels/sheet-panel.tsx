@@ -3,7 +3,7 @@ import { type PluginFilePanelProps, useFileBytes } from "@getpaseo/plugin/client
 import { Loading } from "@getpaseo/plugin/client/ui";
 import { useCallback, useMemo, useState } from "react";
 import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
-import { SHEET_AUTOLOAD_MAX_BYTES, SHEET_MAX_ROWS } from "../../shared/limits";
+import { SHEET_AUTOLOAD_MAX_BYTES, SHEET_MAX_COLS, SHEET_MAX_ROWS } from "../../shared/limits";
 import { shouldAutoLoad } from "../autoload";
 import { ErrorText, SizeGate } from "../size-gate";
 import { parseWorkbook } from "../sheet/parse";
@@ -198,6 +198,11 @@ function SheetBody({
         <Text
           style={styles.notice}
         >{`Menampilkan ${formatCount(SHEET_MAX_ROWS)} baris pertama`}</Text>
+      ) : null}
+      {sheet?.colsTruncated ? (
+        <Text
+          style={styles.notice}
+        >{`Menampilkan ${formatCount(SHEET_MAX_COLS)} kolom pertama`}</Text>
       ) : null}
       {sheet ? (
         <ScrollView horizontal>
