@@ -9,8 +9,9 @@ export class PathNotAllowedError extends Error {
 }
 
 export function allowedRoots(workspaceDirs: string[], home: string): string[] {
+  const safeDirs = workspaceDirs.filter((dir) => path.isAbsolute(dir) && path.resolve(dir) !== "/");
   return [
-    ...workspaceDirs,
+    ...safeDirs,
     "/tmp",
     "/private/tmp",
     path.join(home, "Downloads"),

@@ -81,6 +81,17 @@ describe("allowedRoots", () => {
   });
 });
 
+describe("allowedRoots filtering", () => {
+  it("drops relative and root-of-disk workspace dirs", () => {
+    const roots = allowedRoots(["/", "//", "relative/dir", "", "/ok/dir"], "/Users/someone");
+    expect(roots).toContain("/ok/dir");
+    expect(roots).not.toContain("/");
+    expect(roots).not.toContain("//");
+    expect(roots).not.toContain("relative/dir");
+    expect(roots).not.toContain("");
+  });
+});
+
 describe("fileKind", () => {
   it("maps extensions case-insensitively", () => {
     expect(fileKind("A.MP3")).toBe("audio");
