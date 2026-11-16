@@ -10,7 +10,7 @@ import { fileRead, fileStat } from "../../shared/rpc";
 import { formatSize } from "../autoload";
 import { revokeBlobUrl, toBlobUrl } from "../blob-url";
 import { MediaElement } from "../media-element";
-import { readAllChunks } from "../read-chunks";
+import { encodeBase64, readAllChunks } from "../read-chunks";
 import { SPACING } from "../ui-spacing";
 import { fileLinkMarkdown } from "./file-link";
 
@@ -38,6 +38,7 @@ type PlayState =
   | { phase: "idle" }
   | { phase: "reading" }
   | { phase: "playing"; url: string }
+  | { phase: "native-playing" }
   | { phase: "unsupported" }
   | { phase: "error"; message: string };
 
@@ -82,14 +83,18 @@ function useCardStyles(theme: PluginTheme) {
   );
 }
 
+type PlayAudio = (source: { base64: string; mimeType: string }) => Promise<void>;
+
 function MediaCard({
   file,
   theme,
   platform,
+  playAudio,
 }: {
   file: MediaMessageData["files"][number];
   theme: PluginTheme;
   platform: "ios" | "android" | "web";
+  playAudio: PlayAudio;
 }) {
   const styles = useCardStyles(theme);
   const stat = useRpc(fileStat);
@@ -122,6 +127,11 @@ function MediaCard({
 
   const onPlay = useCallback(async () => {
     if (state.phase !== "ready") return;
+    // Native has no <video> and no binary blobs: audio goes through the host player, video is web-only.
+    if (platform !== "web" && file.kind !== "audio") {
+      setPlay({ phase: "unsupported" });
+      return;
+    }
     setPlay({ phase: "reading" });
     try {
       const bytes = await readAllChunks(
@@ -130,6 +140,12 @@ function MediaCard({
         state.stat.size,
       );
       if (!aliveRef.current) return;
+      if (platform !== "web") {
+        setPlay({ phase: "native-playing" });
+        await playAudio({ base64: encodeBase64(bytes), mimeType: state.stat.mimeType });
+        if (aliveRef.current) setPlay({ phase: "idle" });
+        return;
+      }
       const url = toBlobUrl(bytes, state.stat.mimeType);
       if (url === null) {
         setPlay({ phase: "unsupported" });
@@ -140,7 +156,7 @@ function MediaCard({
     } catch (error) {
       if (aliveRef.current) setPlay({ phase: "error", message: describeError(error) });
     }
-  }, [file.path, state]);
+  }, [file.path, file.kind, platform, playAudio, state]);
 
   const playable = file.kind === "audio" || file.kind === "video";
   const header = (
@@ -188,9 +204,14 @@ function MediaCard({
             </Pressable>
           ) : null}
           {play.phase === "reading" ? <Text style={styles.meta}>Memuat...</Text> : null}
+          {play.phase === "native-playing" ? <Text style={styles.meta}>Memutar...</Text> : null}
           {play.phase === "error" ? <Text style={styles.error}>{play.message}</Text> : null}
           {play.phase === "unsupported" ? (
-            <Text style={styles.meta}>Pemutar hanya tersedia di web</Text>
+            <Text style={styles.meta}>
+              {file.kind === "video"
+                ? "Video hanya bisa diputar di web"
+                : "Pemutar hanya tersedia di web"}
+            </Text>
           ) : null}
           {play.phase === "playing" ? (
             <MediaElement
@@ -212,7 +233,19 @@ function MediaCard({
   );
 }
 
-export function MediaMessage({ item, theme, layout }: PluginTimelineItemProps<MediaMessageData>) {
+/** The renderer needs the client's audio player, which only `contribute` receives. */
+export function createMediaMessage(playAudio: PlayAudio) {
+  return function MediaMessageWithPlayer(props: PluginTimelineItemProps<MediaMessageData>) {
+    return <MediaMessage {...props} playAudio={playAudio} />;
+  };
+}
+
+function MediaMessage({
+  item,
+  theme,
+  layout,
+  playAudio,
+}: PluginTimelineItemProps<MediaMessageData> & { playAudio: PlayAudio }) {
   const styles = useCardStyles(theme);
   const { text, files } = item.data;
   const shown = files.slice(0, MAX_CARDS);
@@ -222,7 +255,13 @@ export function MediaMessage({ item, theme, layout }: PluginTimelineItemProps<Me
       <Markdown>{text}</Markdown>
       <View style={styles.root}>
         {shown.map((file) => (
-          <MediaCard key={file.path} file={file} theme={theme} platform={layout.platform} />
+          <MediaCard
+            key={file.path}
+            file={file}
+            theme={theme}
+            platform={layout.platform}
+            playAudio={playAudio}
+          />
         ))}
         {extra > 0 ? <Text style={styles.meta}>{`+${extra} file lainnya`}</Text> : null}
       </View>

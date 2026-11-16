@@ -5,7 +5,7 @@ import {
   MEDIA_MESSAGE_VERSION,
   mediaMessageSchema,
 } from "./shared/media-message";
-import { MediaMessage } from "./client/chat/media-message";
+import { createMediaMessage } from "./client/chat/media-message";
 import { mediaMessageTransformer } from "./client/chat/transform";
 import { createMediaPanel } from "./client/panels/media-panel";
 import { OfficePanel } from "./client/panels/office-panel";
@@ -54,7 +54,7 @@ export default function contribute(client: PluginClientContext) {
       kind: MEDIA_MESSAGE_KIND,
       version: MEDIA_MESSAGE_VERSION,
       schema: mediaMessageSchema,
-      Component: MediaMessage,
+      Component: createMediaMessage((source) => client.playAudio(source)),
     }),
   ];
   return () => {

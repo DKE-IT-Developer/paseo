@@ -34,6 +34,26 @@ export function decodeBase64(input: string): Uint8Array {
   return out;
 }
 
+/** Pure bytes -> base64 encoder (no btoa/Buffer; safe for React Native). */
+export function encodeBase64(bytes: Uint8Array): string {
+  const parts: string[] = [];
+  // ponytail: 3 KB slices (a multiple of 3, so no padding mid-stream); one join at the end.
+  for (let start = 0; start < bytes.length; start += 3072) {
+    const end = Math.min(start + 3072, bytes.length);
+    let s = "";
+    for (let i = start; i < end; i += 3) {
+      const a = bytes[i];
+      const b = i + 1 < end ? bytes[i + 1] : 0;
+      const c = i + 2 < end ? bytes[i + 2] : 0;
+      s += B64[a >> 2] + B64[((a & 3) << 4) | (b >> 4)];
+      s += i + 1 < end ? B64[((b & 15) << 2) | (c >> 6)] : "=";
+      s += i + 2 < end ? B64[c & 63] : "=";
+    }
+    parts.push(s);
+  }
+  return parts.join("");
+}
+
 export async function readAllChunks(
   call: (offset: number) => Promise<{ base64: string; nextOffset: number; eof: boolean }>,
   maxBytes: number,
