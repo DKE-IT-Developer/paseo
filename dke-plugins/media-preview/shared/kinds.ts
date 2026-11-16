@@ -1,4 +1,6 @@
-export type MediaKind = "audio" | "video" | "pdf" | "office" | "sheet";
+/** Single source of truth for media kinds; the chat message schema derives its enum from it. */
+export const MEDIA_KINDS = ["audio", "video", "pdf", "office", "sheet"] as const;
+export type MediaKind = (typeof MEDIA_KINDS)[number];
 
 export const EXTENSIONS: Record<MediaKind, readonly string[]> = {
   audio: ["mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus"],
@@ -13,7 +15,7 @@ export function fileKind(path: string): MediaKind | null {
   const dot = base.lastIndexOf(".");
   if (dot < 0) return null;
   const ext = base.slice(dot + 1).toLowerCase();
-  for (const kind of Object.keys(EXTENSIONS) as MediaKind[]) {
+  for (const kind of MEDIA_KINDS) {
     if (EXTENSIONS[kind].includes(ext)) return kind;
   }
   return null;
