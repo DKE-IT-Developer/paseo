@@ -18,18 +18,37 @@ jadi symlink yang keluar dari folder itu ditolak.
 
 - Paseo daemon `>= 0.15.0`, macOS.
 - LibreOffice di `/opt/homebrew/bin/soffice` (hanya untuk dokumen office).
-- Plugin harus aktif secara global di daemon (`"pluginsEnabled": true` di `config.json` daemon).
-  Kalau belum, `plugin install` tetap berhasil tetapi status plugin `disabled` dan
-  `plugin reload` gagal dengan `Plugins are globally disabled`.
+- Dependensi plugin terpasang di folder plugin (`npm ci`, lihat di bawah). Daemon membundel
+  kode klien dengan esbuild dari folder plugin dan `xlsx` tidak dijadikan external, jadi
+  `node_modules/xlsx` harus ada di `dke-plugins/media-preview`. `dke-plugins` bukan workspace
+  npm root, sehingga `npm ci` di root repo tidak memasangnya.
+- Plugin harus aktif secara global di daemon (`"pluginsEnabled": true` di `config.json` daemon;
+  bawaannya `false`). Kalau belum, `plugin install` tetap berhasil tetapi status plugin
+  `disabled` dan `plugin reload` gagal dengan `Plugins are globally disabled`.
 
 ## Pasang ke daemon produksi
 
 Belum dijalankan. Perlu izin pemilik daemon lebih dulu.
 
 ```bash
+# 1. Pasang dependensi plugin (wajib, sebelum install).
+cd /Users/itdke/tools/paseo/dke-plugins/media-preview && npm ci
+
+# 2. Cek plugin aktif secara global di daemon tujuan. `daemon config get` membaca config.json
+#    lokal (bawaan ~/.paseo atau $PASEO_HOME; pakai --home untuk home lain), tidak menulis.
+paseo daemon config get pluginsEnabled      # harus "value": true
+paseo plugin ls                             # plugin lain yang aktif berstatus running
+#    Kalau false: `paseo daemon config set pluginsEnabled true` menyimpan dan mencoba
+#    menerapkan ke daemon yang berjalan. Ini mengubah daemon bersama; minta izin pemiliknya,
+#    dan kalau status masih `disabled` daemon perlu direstart oleh pemiliknya.
+
+# 3. Pasang dan cek.
 paseo plugin install /Users/itdke/tools/paseo/dke-plugins/media-preview
-paseo plugin logs dke-media-preview   # harus ada "Plugin ready"
+paseo plugin ls dke-media-preview           # STATUS running, ENABLED yes
+paseo plugin logs dke-media-preview         # harus ada "Plugin ready"
 ```
+
+Ulangi `npm ci` setiap kali `package-lock.json` plugin berubah, sebelum `plugin reload`.
 
 Daemon tidak perlu direstart. Muat ulang tab web Paseo supaya kode klien plugin terbaca.
 
@@ -60,6 +79,7 @@ PY
 # jalankan ulang perintah daemon run di atas
 
 # 2. Pasang dan cek. Selalu pakai --host, jangan --home (keduanya tidak boleh bersamaan).
+(cd /Users/itdke/tools/paseo-media-preview/dke-plugins/media-preview && npm ci)
 $CLEAN $P plugin install /Users/itdke/tools/paseo-media-preview/dke-plugins/media-preview --host 127.0.0.1:6799
 $CLEAN $P plugin logs dke-media-preview --host 127.0.0.1:6799
 
@@ -94,10 +114,13 @@ Semua di `shared/limits.ts`:
 | `CONVERT_TIMEOUT_MS`       | 60 s   | Konversi LibreOffice dibunuh setelah ini                |
 | `CACHE_MAX_BYTES`          | 2 GB   | Batas cache PDF hasil konversi                          |
 | `SHEET_MAX_ROWS`           | 5000   | Baris maksimum per sheet yang ditampilkan               |
+| `SHEET_MAX_COLS`           | 200    | Kolom maksimum per sheet yang ditampilkan               |
 | `SHEET_AUTOLOAD_MAX_BYTES` | 20 MB  | Di atas ini spreadsheet tidak di-parse otomatis         |
 
 Cache konversi ada di `${PASEO_HOME:-~/.paseo}/plugin-cache/dke-media-preview/`. Satu proses
-`soffice` berjalan pada satu waktu.
+`soffice` berjalan pada satu waktu. Menutup panel atau pindah berkas membuang konversi yang
+masih antre; konversi yang sudah berjalan dibiarkan selesai ke cache. Tombol **Batal**
+menghentikan konversi apa pun keadaannya.
 
 ## Keterbatasan yang diketahui
 
@@ -105,11 +128,10 @@ Hasil uji 16 Nov 2026 di daemon terisolasi 0.15.4:
 
 - Path dengan spasi yang **tidak** dibungkus backtick atau tautan markdown tidak dikenali,
   misalnya `/tmp/a/nada uji.mp3` polos. Agen sering menulis path tanpa backtick.
-- Kartu chat hanya muncul setelah pesan selesai, tidak saat streaming.
 - Pemutar di kartu chat dan panel memuat seluruh berkas ke memori klien (blob), bukan streaming.
-- Klik path inti Paseo (tautan hijau di teks pesan) ke berkas di workspace kadang mencatat
-  `Requested path is not a directory` di log daemon; tab tetap terbuka. Itu kode inti, bukan
-  plugin.
+
+Sesuai rancangan: kartu chat dibuat dari pesan asisten yang sudah selesai, jadi tidak muncul
+selama pesan masih di-stream.
 
 ## Rollback
 
