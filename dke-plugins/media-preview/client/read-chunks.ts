@@ -8,6 +8,30 @@ export class TooLargeError extends Error {
   }
 }
 
+/** Thrown when a read or play run is stopped through its AbortSignal ("Batal"). */
+export class AbortedError extends Error {
+  constructor() {
+    super("Dibatalkan");
+    this.name = "AbortError";
+  }
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/** Resolves like `work`, but rejects with AbortedError as soon as `signal` aborts. */
+export function raceAbort<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(new AbortedError());
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new AbortedError());
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([work, aborted]).finally(() => signal.removeEventListener("abort", onAbort));
+}
+
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const LOOKUP = new Uint8Array(256).fill(255);
 for (let i = 0; i < B64.length; i++) LOOKUP[B64.charCodeAt(i)] = i;
@@ -54,21 +78,33 @@ export function encodeBase64(bytes: Uint8Array): string {
   return parts.join("");
 }
 
+export interface ReadChunksOptions {
+  /** Called after every chunk with the bytes read so far and the expected total. */
+  onProgress?: (read: number, total: number) => void;
+  /** Aborting stops before the next call and rejects with AbortedError. */
+  signal?: AbortSignal;
+}
+
 export async function readAllChunks(
   call: (offset: number) => Promise<{ base64: string; nextOffset: number; eof: boolean }>,
   maxBytes: number,
   size: number,
+  options: ReadChunksOptions = {},
 ): Promise<Uint8Array> {
+  const { onProgress, signal } = options;
   if (size > maxBytes) throw new TooLargeError(size, maxBytes);
   const parts: Uint8Array[] = [];
   let total = 0;
   let offset = 0;
   for (;;) {
-    const chunk = await call(offset);
+    if (signal?.aborted) throw new AbortedError();
+    const chunk = await raceAbort(call(offset), signal);
     const bytes = decodeBase64(chunk.base64);
     parts.push(bytes);
     total += bytes.length;
     if (total > maxBytes) throw new TooLargeError(total, maxBytes);
+    onProgress?.(total, Math.max(size, total));
+    if (signal?.aborted) throw new AbortedError();
     if (chunk.eof) break;
     if (chunk.nextOffset <= offset) throw new Error("Pembacaan berkas tidak maju");
     offset = chunk.nextOffset;

@@ -8,7 +8,9 @@ Plugin Paseo privat DKE untuk melihat berkas media langsung di Paseo:
   "Lihat sebagai PDF").
 - **Kartu media di chat**: pesan asisten yang menyebut path absolut atau `~/` ke berkas media
   mendapat kartu di bawahnya. Audio/video punya tombol **Putar**; jenis lain punya tautan
-  **Buka di panel**. Teks pesan tidak diubah.
+  **Buka di panel**. Teks pesan tidak diubah. Berkas audio/video di atas 4 MB diputar sebagai
+  pratinjau ringan buatan ffmpeg di daemon (video mp4 maks. 540p, audio mp3 128 kbps), dengan
+  tombol **Putar kualitas asli** di bawah pemutar.
 
 Server plugin hanya membaca berkas di folder workspace mana pun yang terdaftar di daemon, plus
 `/tmp`, `/private/tmp`, `~/Downloads`, `~/Desktop`, `~/Documents`. Path dicek dengan `realpath`,
@@ -18,6 +20,8 @@ jadi symlink yang keluar dari folder itu ditolak.
 
 - Paseo daemon `>= 0.15.0`, macOS.
 - LibreOffice di `/opt/homebrew/bin/soffice` (hanya untuk dokumen office).
+- ffmpeg di `/opt/homebrew/bin/ffmpeg` dengan `libx264` dan `libmp3lame` (hanya untuk pratinjau
+  audio/video di atas 4 MB di kartu chat).
 - Dependensi plugin terpasang di folder plugin (`npm ci`, lihat di bawah). Daemon membundel
   kode klien dengan esbuild dari folder plugin dan `xlsx` tidak dijadikan external, jadi
   `node_modules/xlsx` harus ada di `dke-plugins/media-preview`. `dke-plugins` bukan workspace
@@ -109,21 +113,29 @@ media benar-benar berputar, pakai browser headless (Playwright), yang halamannya
 
 Semua di `shared/limits.ts`:
 
-| Konstanta                  | Nilai  | Arti                                                    |
-| -------------------------- | ------ | ------------------------------------------------------- |
-| `CHUNK_BYTES`              | 4 MB   | Ukuran satu potongan baca RPC                           |
-| `PANEL_AUTOLOAD_MAX_BYTES` | 300 MB | Di atas ini panel menampilkan tombol **Muat** dulu      |
-| `CHAT_CARD_MAX_BYTES`      | 50 MB  | Di atas ini kartu chat tidak memutar, hanya beri tautan |
-| `CONVERT_TIMEOUT_MS`       | 60 s   | Konversi LibreOffice dibunuh setelah ini                |
-| `CACHE_MAX_BYTES`          | 2 GB   | Batas cache PDF hasil konversi                          |
-| `SHEET_MAX_ROWS`           | 5000   | Baris maksimum per sheet yang ditampilkan               |
-| `SHEET_MAX_COLS`           | 200    | Kolom maksimum per sheet yang ditampilkan               |
-| `SHEET_AUTOLOAD_MAX_BYTES` | 20 MB  | Di atas ini spreadsheet tidak di-parse otomatis         |
+| Konstanta                  | Nilai  | Arti                                                        |
+| -------------------------- | ------ | ----------------------------------------------------------- |
+| `CHUNK_BYTES`              | 4 MB   | Ukuran satu potongan baca RPC                               |
+| `PANEL_AUTOLOAD_MAX_BYTES` | 300 MB | Di atas ini panel menampilkan tombol **Muat** dulu          |
+| `CHAT_CARD_MAX_BYTES`      | 50 MB  | Batas berkas yang dibaca kartu chat (asli maupun pratinjau) |
+| `DIRECT_PLAY_MAX_BYTES`    | 4 MB   | Di atas ini kartu chat memutar pratinjau ffmpeg             |
+| `PREVIEW_TIMEOUT_MS`       | 180 s  | Pembuatan pratinjau ffmpeg dibunuh setelah ini              |
+| `PREVIEW_MAX_HEIGHT`       | 540    | Tinggi maksimum video pratinjau (px)                        |
+| `CONVERT_TIMEOUT_MS`       | 60 s   | Konversi LibreOffice dibunuh setelah ini                    |
+| `CACHE_MAX_BYTES`          | 2 GB   | Batas total cache PDF dan pratinjau (dihitung bersama)      |
+| `SHEET_MAX_ROWS`           | 5000   | Baris maksimum per sheet yang ditampilkan                   |
+| `SHEET_MAX_COLS`           | 200    | Kolom maksimum per sheet yang ditampilkan                   |
+| `SHEET_AUTOLOAD_MAX_BYTES` | 20 MB  | Di atas ini spreadsheet tidak di-parse otomatis             |
 
 Cache konversi ada di `${PASEO_HOME:-~/.paseo}/plugin-cache/dke-media-preview/`. Satu proses
 `soffice` berjalan pada satu waktu. Menutup panel atau pindah berkas membuang konversi yang
 masih antre; konversi yang sudah berjalan dibiarkan selesai ke cache. Tombol **Batal**
 menghentikan konversi apa pun keadaannya.
+
+Pratinjau ffmpeg memakai cache yang sama (`<key>.preview.mp4|mp3`) dan antrean sendiri: satu
+`ffmpeg` sekaligus, terpisah dari `soffice`, lewat `nice -n 10`. Di kartu chat, **Batal** saat
+"Menyiapkan pratinjau" membatalkan job; saat "Memuat" hanya menghentikan transfer (pratinjau
+yang sudah jadi tetap di cache).
 
 ## Keterbatasan yang diketahui
 
