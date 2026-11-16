@@ -34,8 +34,12 @@ export class NotConvertibleError extends Error {
   }
 }
 
+/** Re-validates a queued input right before conversion; returns the path to convert. */
+export type InputCheck = (input: string) => Promise<string>;
+
 interface Job {
   input: string;
+  recheck?: InputCheck;
   state: ConvertState;
   error?: string;
   size?: number;
@@ -113,7 +117,10 @@ export class ConversionQueue {
     return state === "queued" || state === "running";
   }
 
-  async start(realPath: string): Promise<{ jobId: string; cached: boolean }> {
+  async start(
+    realPath: string,
+    opts: { recheck?: InputCheck } = {},
+  ): Promise<{ jobId: string; cached: boolean }> {
     const info = await stat(realPath);
     if (!info.isFile()) throw new NotRegularFileError();
     const key = cacheKey(realPath, info.size, info.mtimeMs);
@@ -138,7 +145,11 @@ export class ConversionQueue {
       this.jobs.set(key, { input: realPath, state: "done", size: cachedSize });
       return { jobId: key, cached: true };
     }
-    this.jobs.set(key, { input: realPath, state: "queued" });
+    this.jobs.set(key, {
+      input: realPath,
+      state: "queued",
+      ...(opts.recheck ? { recheck: opts.recheck } : {}),
+    });
     this.pending.push(key);
     void this.pump();
     return { jobId: key, cached: false };
@@ -199,14 +210,14 @@ export class ConversionQueue {
     const timer = setTimeout(() => controller.abort("timeout"), this.timeoutMs);
     let outDir: string | undefined;
     try {
+      // The file may have changed while queued (e.g. swapped for a symlink out of the
+      // allowed roots): validate again right before handing it to soffice.
+      const input = job.recheck ? await job.recheck(job.input) : job.input;
       await mkdir(this.cacheDir, { recursive: true });
       outDir = await mkdtemp(path.join(this.cacheDir, "tmp-"));
       const dir = outDir;
-      await runAbortable(
-        () => this.runConverter(job.input, dir, controller.signal),
-        controller.signal,
-      );
-      const produced = await findPdf(outDir, job.input);
+      await runAbortable(() => this.runConverter(input, dir, controller.signal), controller.signal);
+      const produced = await findPdf(outDir, input);
       if (!produced) throw new Error("Konversi selesai tanpa berkas PDF");
       const target = this.cachedPdf(key);
       await rename(produced, target);
@@ -309,10 +320,13 @@ export const runSoffice: Converter = (input, outDir, signal) =>
 export function createConvertHandlers(getRoots: () => Promise<string[]>, queue: ConversionQueue) {
   return {
     async start({ path: target }: { path: string }) {
-      const real = await resolveAllowedPath(target, await getRoots());
-      const kind = fileKind(real);
-      if (kind !== "office" && kind !== "sheet") throw new NotConvertibleError();
-      return queue.start(real);
+      const allowed = async (candidate: string): Promise<string> => {
+        const real = await resolveAllowedPath(candidate, await getRoots());
+        const kind = fileKind(real);
+        if (kind !== "office" && kind !== "sheet") throw new NotConvertibleError();
+        return real;
+      };
+      return queue.start(await allowed(target), { recheck: allowed });
     },
     status({ jobId }: { jobId: string }): ConvertStatus {
       return queue.status(jobId);

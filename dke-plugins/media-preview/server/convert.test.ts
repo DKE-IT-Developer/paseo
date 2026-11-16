@@ -7,6 +7,8 @@ import {
   readdir,
   realpath,
   rm,
+  symlink,
+  unlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -314,6 +316,31 @@ describe("createConvertHandlers", () => {
     const outside = path.join(base, "x.docx");
     await writeFile(outside, "x");
     await expect(h.start({ path: outside })).rejects.toThrow("Path tidak diizinkan");
+  });
+
+  it("re-checks the path before spawning: a queued file swapped for an out-of-root symlink errors", async () => {
+    const release = gate();
+    const seen: string[] = [];
+    const q = makeQueue(async (input, outDir, signal) => {
+      seen.push(input);
+      if (seen.length === 1) await release.promise;
+      await writesPdf(input, outDir, signal);
+    });
+    const h = createConvertHandlers(async () => [root], q);
+    const first = await h.start({ path: await doc("a.docx") });
+    await waitState(q, first.jobId, "running");
+    const victim = await doc("b.docx");
+    const queued = await h.start({ path: victim });
+    expect(q.status(queued.jobId).state).toBe("queued");
+    // While queued, b.docx is replaced by a symlink that leaves the allowed roots.
+    const outside = path.join(base, "rahasia.docx");
+    await writeFile(outside, "rahasia");
+    await unlink(victim);
+    await symlink(outside, victim);
+    release.release();
+    await waitState(q, queued.jobId, "error");
+    expect(q.status(queued.jobId).error).toBe("Path tidak diizinkan");
+    expect(seen).toEqual([path.join(root, "a.docx")]);
   });
 
   it("read returns the pdf in fileRead chunk shape", async () => {
