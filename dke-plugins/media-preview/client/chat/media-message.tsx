@@ -2,7 +2,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { type PluginTimelineItemProps, useRpc } from "@getpaseo/plugin/client";
 import { Markdown } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 import type { MediaKind } from "../../shared/kinds";
 import { CHAT_CARD_MAX_BYTES, DIRECT_PLAY_MAX_BYTES } from "../../shared/limits";
 import type { MediaMessageData } from "../../shared/media-message";
@@ -17,6 +17,7 @@ import {
 import { formatSize } from "../autoload";
 import { revokeBlobUrl, toBlobUrl } from "../blob-url";
 import { MediaElement } from "../media-element";
+import { agentWebUrl } from "./web-link";
 import { encodeBase64, isAbortError } from "../read-chunks";
 import { SPACING } from "../ui-spacing";
 import { fileLinkMarkdown } from "./file-link";
@@ -127,11 +128,13 @@ function MediaCard({
   theme,
   platform,
   playAudio,
+  webUrl,
 }: {
   file: MediaMessageData["files"][number];
   theme: PluginTheme;
   platform: "ios" | "android" | "web";
   playAudio: PlayAudio;
+  webUrl: string;
 }) {
   const styles = useCardStyles(theme);
   const stat = useRpc(fileStat);
@@ -291,6 +294,7 @@ function MediaCard({
           onPlay={onPlay}
           onPlayOriginal={onPlayOriginal}
           onCancel={onCancel}
+          webUrl={webUrl}
         />
       ) : null}
       {!playable || originalTooBig ? <Markdown>{fileLinkMarkdown(file.path)}</Markdown> : null}
@@ -307,6 +311,7 @@ function PlayControls({
   onPlay,
   onPlayOriginal,
   onCancel,
+  webUrl,
 }: {
   play: PlayState;
   kind: "audio" | "video";
@@ -316,6 +321,7 @@ function PlayControls({
   onPlay: () => void;
   onPlayOriginal: () => void;
   onCancel: () => void;
+  webUrl: string;
 }) {
   const styles = useCardStyles(theme);
   const showOriginal =
@@ -359,9 +365,7 @@ function PlayControls({
       ) : null}
       {play.phase === "error" ? <Text style={styles.error}>{play.message}</Text> : null}
       {play.phase === "unsupported" ? (
-        <Text style={styles.meta}>
-          {kind === "video" ? "Video hanya bisa diputar di web" : "Pemutar hanya tersedia di web"}
-        </Text>
+        <UnsupportedNotice kind={kind} theme={theme} webUrl={webUrl} />
       ) : null}
       {play.phase === "playing" ? (
         <>
@@ -383,6 +387,36 @@ function PlayControls({
   );
 }
 
+/** Native clients: say why it cannot play here, and offer the web UI for video. */
+function UnsupportedNotice({
+  kind,
+  theme,
+  webUrl,
+}: {
+  kind: "audio" | "video";
+  theme: PluginTheme;
+  webUrl: string;
+}) {
+  const styles = useCardStyles(theme);
+  const openWeb = useCallback(() => {
+    void Linking.openURL(webUrl);
+  }, [webUrl]);
+  if (kind !== "video") return <Text style={styles.meta}>Pemutar hanya tersedia di web</Text>;
+  return (
+    <>
+      <Text style={styles.meta}>Video hanya bisa diputar di web</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Buka di browser"
+        onPress={openWeb}
+        style={styles.secondaryButton}
+      >
+        <Text style={styles.secondaryButtonText}>Buka di browser</Text>
+      </Pressable>
+    </>
+  );
+}
+
 /** The renderer needs the client's audio player, which only `contribute` receives. */
 export function createMediaMessage(playAudio: PlayAudio) {
   return function MediaMessageWithPlayer(props: PluginTimelineItemProps<MediaMessageData>) {
@@ -394,9 +428,12 @@ function MediaMessage({
   item,
   theme,
   layout,
+  host,
+  agentId,
   playAudio,
 }: PluginTimelineItemProps<MediaMessageData> & { playAudio: PlayAudio }) {
   const styles = useCardStyles(theme);
+  const webUrl = agentWebUrl(host.id, agentId);
   const { text, files } = item.data;
   const shown = files.slice(0, MAX_CARDS);
   const extra = files.length - shown.length;
@@ -411,6 +448,7 @@ function MediaMessage({
             theme={theme}
             platform={layout.platform}
             playAudio={playAudio}
+            webUrl={webUrl}
           />
         ))}
         {extra > 0 ? <Text style={styles.meta}>{`+${extra} file lainnya`}</Text> : null}
