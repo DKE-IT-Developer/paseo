@@ -3,7 +3,7 @@ import { type PluginFilePanelProps, useFileBytes } from "@getpaseo/plugin/client
 import { Loading } from "@getpaseo/plugin/client/ui";
 import { useCallback, useMemo, useState } from "react";
 import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
-import { PANEL_AUTOLOAD_MAX_BYTES, SHEET_MAX_ROWS } from "../../shared/limits";
+import { SHEET_AUTOLOAD_MAX_BYTES, SHEET_MAX_ROWS } from "../../shared/limits";
 import { shouldAutoLoad } from "../autoload";
 import { ErrorText, SizeGate } from "../size-gate";
 import { parseWorkbook } from "../sheet/parse";
@@ -232,11 +232,17 @@ export function SheetPanel(props: PluginFilePanelProps) {
   const onLoad = useCallback(() => setConfirmed(true), []);
   const onPdf = useCallback(() => setAsPdf(true), []);
   const size = props.file.size;
-  if (!confirmed && !shouldAutoLoad(size, PANEL_AUTOLOAD_MAX_BYTES)) {
+  if (asPdf) return <OfficeFlow file={props.file} theme={props.theme} />;
+  if (!confirmed && !shouldAutoLoad(size, SHEET_AUTOLOAD_MAX_BYTES)) {
     return (
-      <SizeGate size={size} max={PANEL_AUTOLOAD_MAX_BYTES} onLoad={onLoad} theme={props.theme} />
+      <SizeGate
+        size={size}
+        max={SHEET_AUTOLOAD_MAX_BYTES}
+        onLoad={onLoad}
+        onPdf={onPdf}
+        theme={props.theme}
+      />
     );
   }
-  if (asPdf) return <OfficeFlow file={props.file} theme={props.theme} />;
   return <SheetLoader file={props.file} theme={props.theme} onPdf={onPdf} />;
 }

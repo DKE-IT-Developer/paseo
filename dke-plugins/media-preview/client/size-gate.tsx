@@ -9,9 +9,10 @@ export interface SizeGateProps {
   max: number;
   onLoad: () => void;
   theme: PluginTheme;
+  onPdf?: () => void;
 }
 
-export function SizeGate({ size, onLoad, theme }: SizeGateProps) {
+export function SizeGate({ size, onLoad, onPdf, theme }: SizeGateProps) {
   const styles = useMemo(
     () => ({
       root: {
@@ -43,6 +44,16 @@ export function SizeGate({ size, onLoad, theme }: SizeGateProps) {
       >
         <Text style={styles.buttonText}>Muat</Text>
       </Pressable>
+      {onPdf ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Lihat sebagai PDF"
+          onPress={onPdf}
+          style={styles.button}
+        >
+          <Text style={styles.buttonText}>Lihat sebagai PDF</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

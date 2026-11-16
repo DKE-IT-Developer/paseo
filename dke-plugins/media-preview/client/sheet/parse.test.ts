@@ -36,4 +36,18 @@ describe("parseWorkbook", () => {
     expect(sheets[1].rows).toHaveLength(2);
     expect(sheets[1].truncated).toBe(false);
   });
+
+  it("sheetRows limits parsed rows and sets truncated", () => {
+    const wb = XLSX.utils.book_new();
+    const aoa = Array.from({ length: 50 }, (_, i) => [`r${i}`, i]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Besar");
+    const bytes = new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }));
+    const { sheets } = parseWorkbook(bytes, 10);
+    expect(sheets[0].rows).toHaveLength(10);
+    expect(sheets[0].rows[9]).toEqual(["r9", "9"]);
+    expect(sheets[0].truncated).toBe(true);
+    const exact = parseWorkbook(bytes, 50).sheets[0];
+    expect(exact.rows).toHaveLength(50);
+    expect(exact.truncated).toBe(false);
+  });
 });

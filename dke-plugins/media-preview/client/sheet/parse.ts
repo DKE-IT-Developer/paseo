@@ -7,7 +7,8 @@ export interface ParsedSheet {
 }
 
 export function parseWorkbook(bytes: Uint8Array, maxRows: number): { sheets: ParsedSheet[] } {
-  const wb = XLSX.read(bytes, { type: "array" });
+  // sheetRows: parse only maxRows + 1 rows (the extra row tells us whether we truncated).
+  const wb = XLSX.read(bytes, { type: "array", sheetRows: maxRows + 1 });
   const sheets = wb.SheetNames.map((name): ParsedSheet => {
     const ws = wb.Sheets[name];
     const ref = ws?.["!ref"];
@@ -16,7 +17,6 @@ export function parseWorkbook(bytes: Uint8Array, maxRows: number): { sheets: Par
     const total = full.e.r - full.s.r + 1;
     const truncated = total > maxRows;
     const range = truncated ? { s: full.s, e: { c: full.e.c, r: full.s.r + maxRows - 1 } } : full;
-    // header:1 -> array of arrays; raw:false -> formatted display text.
     const data = XLSX.utils.sheet_to_json<unknown[]>(ws, {
       header: 1,
       raw: false,

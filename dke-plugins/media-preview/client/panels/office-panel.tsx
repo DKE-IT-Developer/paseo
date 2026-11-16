@@ -7,20 +7,15 @@ import { PANEL_AUTOLOAD_MAX_BYTES } from "../../shared/limits";
 import { convertCancel, convertRead, convertStart, convertStatus } from "../../shared/rpc";
 import { shouldAutoLoad } from "../autoload";
 import { revokeBlobUrl, toBlobUrl } from "../blob-url";
-import { readAllChunks } from "../read-chunks";
 import { ErrorText, SizeGate } from "../size-gate";
 import { SPACING } from "../ui-spacing";
+import { runOfficeConversion } from "./office-run";
 import { officeReducer } from "./office-state";
 
 const POLL_INTERVAL_MS = 1000;
-const WEB_ONLY_MESSAGE = "Pratinjau dokumen hanya tersedia di web";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function ActionButton({
@@ -67,73 +62,45 @@ export function OfficeFlow({ file, theme }: { file: PluginFile; theme: PluginThe
   const [attempt, setAttempt] = useState(0);
   const [url, setUrl] = useState<string | null>(null);
   const jobRef = useRef<string | null>(null);
-  const stoppedRef = useRef(false);
+  const stopCurrentRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    stoppedRef.current = false;
+    // Per-run flag: a later run (after "Coba lagi") can never revive this one.
+    let stopped = false;
     let created: string | null = null;
-    const stopped = () => stoppedRef.current;
-    async function run() {
-      try {
-        const rpc = rpcRef.current;
-        let { jobId } = await rpc.start({ path: file.path });
-        if (stopped()) return;
-        jobRef.current = jobId;
-        dispatch({ type: "started", jobId });
-        let restarted = false;
-        for (;;) {
-          let st;
-          try {
-            st = await rpc.status({ jobId });
-          } catch (error) {
-            // Unknown jobId (e.g. daemon restarted) throws: start again once.
-            if (restarted) throw error;
-            restarted = true;
-            if (stopped()) return;
-            ({ jobId } = await rpc.start({ path: file.path }));
-            if (stopped()) return;
-            jobRef.current = jobId;
-            dispatch({ type: "started", jobId });
-            continue;
-          }
-          if (stopped()) return;
-          dispatch({ type: "status", state: st.state, error: st.error });
-          if (st.state === "done") {
-            const finalJob = jobId;
-            const bytes = await readAllChunks(
-              (offset) => rpc.read({ jobId: finalJob, offset }),
-              PANEL_AUTOLOAD_MAX_BYTES,
-              st.size ?? 0,
-            );
-            if (stopped()) return;
-            const blobUrl = toBlobUrl(bytes, "application/pdf");
-            if (blobUrl === null) {
-              dispatch({ type: "failed", message: WEB_ONLY_MESSAGE });
-              return;
-            }
-            created = blobUrl;
-            setUrl(blobUrl);
-            dispatch({ type: "loaded" });
-            return;
-          }
-          if (st.state !== "queued" && st.state !== "running") return;
-          await sleep(POLL_INTERVAL_MS);
-          if (stopped()) return;
-        }
-      } catch (error) {
-        if (!stopped()) dispatch({ type: "failed", message: messageOf(error) });
-      }
-    }
-    void run();
+    stopCurrentRef.current = () => {
+      stopped = true;
+    };
+    const rpc = rpcRef.current;
+    void runOfficeConversion(
+      {
+        path: file.path,
+        maxBytes: PANEL_AUTOLOAD_MAX_BYTES,
+        rpc: { start: rpc.start, status: rpc.status, read: rpc.read },
+        dispatch,
+        onJobId: (jobId) => {
+          jobRef.current = jobId;
+        },
+        onUrl: (blobUrl) => {
+          created = blobUrl;
+          setUrl(blobUrl);
+        },
+        toBlobUrl,
+        revokeBlobUrl,
+        sleep,
+        pollMs: POLL_INTERVAL_MS,
+      },
+      () => stopped,
+    );
     return () => {
-      stoppedRef.current = true;
+      stopped = true;
       if (created) revokeBlobUrl(created);
       setUrl(null);
     };
   }, [file.path, attempt]);
 
   const onCancel = useCallback(() => {
-    stoppedRef.current = true;
+    stopCurrentRef.current?.();
     dispatch({ type: "cancel" });
     const jobId = jobRef.current;
     if (jobId) void rpcRef.current.cancel({ jobId }).catch(() => undefined);
