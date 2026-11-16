@@ -30,6 +30,17 @@ describe("findMediaPaths", () => {
     ]);
   });
 
+  it("percent-decodes markdown link targets like the host does", () => {
+    expect(paths("[a](/tmp/laporan%20uji.docx) [b](</tmp/presentasi%20%28uji%29.pptx>)")).toEqual([
+      "/tmp/laporan uji.docx",
+      "/tmp/presentasi (uji).pptx",
+    ]);
+  });
+
+  it("keeps a markdown link target with a malformed escape as written", () => {
+    expect(paths("[a](/tmp/diskon%zz.pdf)")).toEqual(["/tmp/diskon%zz.pdf"]);
+  });
+
   it("finds file:// urls and percent-decodes", () => {
     expect(paths("buka file:///tmp/rapat%20final.docx sekarang")).toEqual([
       "/tmp/rapat final.docx",

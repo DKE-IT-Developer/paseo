@@ -12,6 +12,7 @@ import { revokeBlobUrl, toBlobUrl } from "../blob-url";
 import { MediaElement } from "../media-element";
 import { readAllChunks } from "../read-chunks";
 import { SPACING } from "../ui-spacing";
+import { fileLinkMarkdown } from "./file-link";
 
 const MAX_CARDS = 6;
 
@@ -47,11 +48,6 @@ function describeError(error: unknown): string {
     return "Tidak bisa dibaca (di luar folder yang diizinkan)";
   }
   return message;
-}
-
-/** Markdown link destination in angle brackets so spaces and parentheses survive. */
-export function fileLinkMarkdown(path: string): string {
-  return `[Buka di panel](<${path}>)`;
 }
 
 function baseName(path: string): string {

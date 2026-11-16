@@ -23,6 +23,15 @@ function fromFileUrl(raw: string): string | null {
   return rest;
 }
 
+/** Markdown link targets are URLs: the host decodes their escapes, so the card must too. */
+function decodeLinkTarget(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 function accept(candidate: string | null, seen: Set<string>, out: FoundMediaPath[]): void {
   if (!candidate) return;
   const path = candidate.trim();
@@ -40,9 +49,10 @@ export function findMediaPaths(text: string): FoundMediaPath[] {
     const [, fileUrl, tick, angle, plainLink, bare] = match;
     if (fileUrl) accept(fromFileUrl(fileUrl), seen, out);
     else if (tick !== undefined) accept(tick, seen, out);
-    else if (angle !== undefined) accept(angle, seen, out);
-    else if (plainLink !== undefined) accept(plainLink.replace(TRAILING, ""), seen, out);
-    else if (bare) accept(bare.replace(TRAILING, ""), seen, out);
+    else if (angle !== undefined) accept(decodeLinkTarget(angle), seen, out);
+    else if (plainLink !== undefined) {
+      accept(decodeLinkTarget(plainLink.replace(TRAILING, "")), seen, out);
+    } else if (bare) accept(bare.replace(TRAILING, ""), seen, out);
   }
   return out;
 }
