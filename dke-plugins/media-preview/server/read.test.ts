@@ -94,4 +94,11 @@ describe("stat", () => {
     expect(s.size).toBe(3);
     expect(s.mtimeMs).toBeGreaterThan(0);
   });
+
+  it("expands ~/ to the injected home before checking roots", async () => {
+    await mkdir(path.join(root, "Documents"));
+    await writeFile(path.join(root, "Documents", "a.mp3"), "abc");
+    const homed = createReadHandlers(async () => [root], root);
+    expect((await homed.stat({ path: "~/Documents/a.mp3" })).size).toBe(3);
+  });
 });

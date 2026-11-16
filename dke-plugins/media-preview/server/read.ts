@@ -1,8 +1,9 @@
 import { constants } from "node:fs";
 import { open, stat } from "node:fs/promises";
+import os from "node:os";
 import { fileKind, mimeForPath } from "../shared/kinds";
 import { CHUNK_BYTES } from "../shared/limits";
-import { resolveAllowedPath } from "./paths";
+import { expandHome, resolveAllowedPath } from "./paths";
 
 export class NotRegularFileError extends Error {
   constructor() {
@@ -53,9 +54,9 @@ export async function readFileChunk(realPath: string, offset: number): Promise<F
   }
 }
 
-export function createReadHandlers(getRoots: () => Promise<string[]>) {
+export function createReadHandlers(getRoots: () => Promise<string[]>, home: string = os.homedir()) {
   async function resolveMedia(target: string): Promise<string> {
-    const real = await resolveAllowedPath(target, await getRoots());
+    const real = await resolveAllowedPath(expandHome(target, home), await getRoots());
     if (fileKind(real) === null) throw new UnsupportedKindError();
     return real;
   }

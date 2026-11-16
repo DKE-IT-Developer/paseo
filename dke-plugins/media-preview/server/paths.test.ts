@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fileKind } from "../shared/kinds";
-import { PathNotAllowedError, allowedRoots, resolveAllowedPath, workspaceDirsFrom } from "./paths";
+import {
+  PathNotAllowedError,
+  allowedRoots,
+  expandHome,
+  resolveAllowedPath,
+  workspaceDirsFrom,
+} from "./paths";
 
 let base: string;
 let root: string;
@@ -113,5 +119,14 @@ describe("fileKind", () => {
     expect(fileKind("/x/y/deck.pptx")).toBe("office");
     expect(fileKind("x.csv")).toBeNull();
     expect(fileKind("noext")).toBeNull();
+  });
+});
+
+describe("expandHome", () => {
+  it("expands a leading ~/ and leaves other paths alone", () => {
+    expect(expandHome("~/Documents/a.pdf", "/Users/x")).toBe("/Users/x/Documents/a.pdf");
+    expect(expandHome("~", "/Users/x")).toBe("/Users/x");
+    expect(expandHome("/tmp/a.pdf", "/Users/x")).toBe("/tmp/a.pdf");
+    expect(expandHome("~other/a.pdf", "/Users/x")).toBe("~other/a.pdf");
   });
 });

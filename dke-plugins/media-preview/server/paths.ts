@@ -20,6 +20,13 @@ export function allowedRoots(workspaceDirs: string[], home: string): string[] {
   ];
 }
 
+/** Expands a leading `~` or `~/` to `home`; other paths are returned unchanged. */
+export function expandHome(target: string, home: string): string {
+  if (target === "~") return home;
+  if (target.startsWith("~/")) return path.join(home, target.slice(2));
+  return target;
+}
+
 function isInside(root: string, target: string): boolean {
   if (target === root) return true;
   const prefix = root.endsWith(path.sep) ? root : root + path.sep;
