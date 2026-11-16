@@ -39,8 +39,10 @@ cd /Users/itdke/tools/paseo/dke-plugins/media-preview && npm ci
 paseo daemon config get pluginsEnabled      # harus "value": true
 paseo plugin ls                             # plugin lain yang aktif berstatus running
 #    Kalau false: `paseo daemon config set pluginsEnabled true` menyimpan dan mencoba
-#    menerapkan ke daemon yang berjalan. Ini mengubah daemon bersama; minta izin pemiliknya,
-#    dan kalau status masih `disabled` daemon perlu direstart oleh pemiliknya.
+#    menerapkan ke daemon yang berjalan (pluginsEnabled bisa diubah tanpa restart). Ini mengubah
+#    daemon bersama; minta izin pemiliknya. Restart hanya perlu bila `config set` melaporkan
+#    applied false atau reload gagal.
+#    `paseo plugin ls` kosong (`[]` dengan --json) berarti belum ada plugin terpasang, bukan error.
 
 # 3. Pasang dan cek.
 paseo plugin install /Users/itdke/tools/paseo/dke-plugins/media-preview
@@ -50,7 +52,8 @@ paseo plugin logs dke-media-preview         # harus ada "Plugin ready"
 
 Ulangi `npm ci` setiap kali `package-lock.json` plugin berubah, sebelum `plugin reload`.
 
-Daemon tidak perlu direstart. Muat ulang tab web Paseo supaya kode klien plugin terbaca.
+Daemon tidak perlu direstart (terverifikasi saat pemasangan produksi 2026-11-16: pid daemon tetap
+sama, plugin langsung `running`). Muat ulang tab web Paseo supaya kode klien plugin terbaca.
 
 ## Uji di daemon terisolasi
 
