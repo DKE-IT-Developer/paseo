@@ -2,6 +2,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { formatSize } from "./autoload";
+import { SPACING } from "./ui-spacing";
 
 export interface SizeGateProps {
   size: number;
@@ -17,15 +18,15 @@ export function SizeGate({ size, onLoad, theme }: SizeGateProps) {
         flex: 1,
         alignItems: "center" as const,
         justifyContent: "center" as const,
-        padding: 16,
+        padding: SPACING.lg,
         backgroundColor: theme.colors.surface0,
       },
-      text: { color: theme.colors.foreground, marginBottom: 12 },
+      text: { color: theme.colors.foreground, marginBottom: SPACING.md },
       button: {
         backgroundColor: theme.colors.accent,
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 6,
+        paddingHorizontal: SPACING.lg,
+        paddingVertical: SPACING.sm,
+        borderRadius: SPACING.radius,
       },
       buttonText: { color: theme.colors.accentForeground },
     }),
