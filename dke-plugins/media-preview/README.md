@@ -113,19 +113,21 @@ media benar-benar berputar, pakai browser headless (Playwright), yang halamannya
 
 Semua di `shared/limits.ts`:
 
-| Konstanta                  | Nilai  | Arti                                                        |
-| -------------------------- | ------ | ----------------------------------------------------------- |
-| `CHUNK_BYTES`              | 4 MB   | Ukuran satu potongan baca RPC                               |
-| `PANEL_AUTOLOAD_MAX_BYTES` | 300 MB | Di atas ini panel menampilkan tombol **Muat** dulu          |
-| `CHAT_CARD_MAX_BYTES`      | 50 MB  | Batas berkas yang dibaca kartu chat (asli maupun pratinjau) |
-| `DIRECT_PLAY_MAX_BYTES`    | 4 MB   | Di atas ini kartu chat memutar pratinjau ffmpeg             |
-| `PREVIEW_TIMEOUT_MS`       | 180 s  | Pembuatan pratinjau ffmpeg dibunuh setelah ini              |
-| `PREVIEW_MAX_HEIGHT`       | 540    | Tinggi maksimum video pratinjau (px)                        |
-| `CONVERT_TIMEOUT_MS`       | 60 s   | Konversi LibreOffice dibunuh setelah ini                    |
-| `CACHE_MAX_BYTES`          | 2 GB   | Batas total cache PDF dan pratinjau (dihitung bersama)      |
-| `SHEET_MAX_ROWS`           | 5000   | Baris maksimum per sheet yang ditampilkan                   |
-| `SHEET_MAX_COLS`           | 200    | Kolom maksimum per sheet yang ditampilkan                   |
-| `SHEET_AUTOLOAD_MAX_BYTES` | 20 MB  | Di atas ini spreadsheet tidak di-parse otomatis             |
+| Konstanta                   | Nilai  | Arti                                                        |
+| --------------------------- | ------ | ----------------------------------------------------------- |
+| `CHUNK_BYTES`               | 4 MB   | Ukuran satu potongan baca RPC                               |
+| `PANEL_AUTOLOAD_MAX_BYTES`  | 300 MB | Di atas ini panel menampilkan tombol **Muat** dulu          |
+| `CHAT_CARD_MAX_BYTES`       | 50 MB  | Batas berkas yang dibaca kartu chat (asli maupun pratinjau) |
+| `DIRECT_PLAY_MAX_BYTES`     | 4 MB   | Di atas ini kartu chat memutar pratinjau ffmpeg             |
+| `PREVIEW_TIMEOUT_MS`        | 180 s  | Pembuatan pratinjau ffmpeg dibunuh setelah ini              |
+| `PREVIEW_MAX_HEIGHT`        | 540    | Tinggi maksimum video pratinjau (px)                        |
+| `PREVIEW_MAX_SECONDS_VIDEO` | 300 s  | Pratinjau video hanya 5 menit pertama                       |
+| `PREVIEW_MAX_SECONDS_AUDIO` | 3000 s | Pratinjau audio hanya 50 menit pertama                      |
+| `CONVERT_TIMEOUT_MS`        | 60 s   | Konversi LibreOffice dibunuh setelah ini                    |
+| `CACHE_MAX_BYTES`           | 2 GB   | Batas total cache PDF dan pratinjau (dihitung bersama)      |
+| `SHEET_MAX_ROWS`            | 5000   | Baris maksimum per sheet yang ditampilkan                   |
+| `SHEET_MAX_COLS`            | 200    | Kolom maksimum per sheet yang ditampilkan                   |
+| `SHEET_AUTOLOAD_MAX_BYTES`  | 20 MB  | Di atas ini spreadsheet tidak di-parse otomatis             |
 
 Cache konversi ada di `${PASEO_HOME:-~/.paseo}/plugin-cache/dke-media-preview/`. Satu proses
 `soffice` berjalan pada satu waktu. Menutup panel atau pindah berkas membuang konversi yang
@@ -133,7 +135,9 @@ masih antre; konversi yang sudah berjalan dibiarkan selesai ke cache. Tombol **B
 menghentikan konversi apa pun keadaannya.
 
 Pratinjau ffmpeg memakai cache yang sama (`<key>.preview.mp4|mp3`) dan antrean sendiri: satu
-`ffmpeg` sekaligus, terpisah dari `soffice`, lewat `nice -n 10`. Di kartu chat, **Batal** saat
+`ffmpeg` sekaligus, terpisah dari `soffice`, lewat `nice -n 10`; libx264 dibatasi
+`-threads 2`. Pratinjau hanya memuat bagian awal berkas (`-t`, lihat tabel), dan kartu
+menandai pratinjau video "Pratinjau · maks. 5 menit pertama". Di kartu chat, **Batal** saat
 "Menyiapkan pratinjau" membatalkan job; saat "Memuat" hanya menghentikan transfer (pratinjau
 yang sudah jadi tetap di cache).
 

@@ -25,6 +25,7 @@ import {
   type PlayMode,
   type PlayProgress,
   chooseSource,
+  previewLabel,
   runPlay,
 } from "./play-run";
 
@@ -363,7 +364,7 @@ function PlayControls({
       ) : null}
       {play.phase === "playing" ? (
         <>
-          {play.preview ? <Text style={styles.meta}>Pratinjau</Text> : null}
+          {play.preview ? <Text style={styles.meta}>{previewLabel(kind)}</Text> : null}
           <MediaElement kind={kind} url={play.url} theme={theme} platform={platform} />
         </>
       ) : null}

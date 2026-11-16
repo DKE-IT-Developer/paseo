@@ -15,7 +15,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PREVIEW_MAX_HEIGHT } from "../shared/limits";
+import {
+  PREVIEW_MAX_HEIGHT,
+  PREVIEW_MAX_SECONDS_AUDIO,
+  PREVIEW_MAX_SECONDS_VIDEO,
+} from "../shared/limits";
 import { cacheKey } from "./cache";
 import { ConversionQueue, type Converter } from "./convert";
 import { PREVIEW_OUTPUT, createFfmpegRunner, createPreviewHandlers, previewExt } from "./preview";
@@ -197,16 +201,20 @@ describe("createFfmpegRunner (fake binary)", () => {
       "-hide_banner",
       "-loglevel",
       "error",
+      "-t",
+      String(PREVIEW_MAX_SECONDS_VIDEO),
       "-i",
       `file:${input}`,
       "-map",
-      "0:v:0",
+      "0:V:0?",
       "-map",
       "0:a:0?",
       "-vf",
       `scale=-2:'min(${PREVIEW_MAX_HEIGHT},trunc(ih/2)*2)'`,
       "-c:v",
       "libx264",
+      "-threads",
+      "2",
       "-preset",
       "veryfast",
       "-crf",
@@ -243,6 +251,8 @@ describe("createFfmpegRunner (fake binary)", () => {
       "-hide_banner",
       "-loglevel",
       "error",
+      "-t",
+      String(PREVIEW_MAX_SECONDS_AUDIO),
       "-i",
       `file:${input}`,
       "-vn",
@@ -253,6 +263,49 @@ describe("createFfmpegRunner (fake binary)", () => {
       "-y",
       `file:${path.join(outDir, "preview.mp3")}`,
     ]);
+  });
+
+  it("maps an optional non-attached-picture video stream so audio-only or cover-art videos still work", async () => {
+    const argsFile = path.join(base, "args.txt");
+    const bin = await recordingBinary(argsFile);
+    const outDir = path.join(base, "out");
+    await mkdir(outDir);
+    await createFfmpegRunner({ binary: bin })(
+      await media("hanya-suara.m4v"),
+      outDir,
+      new AbortController().signal,
+    );
+    const args = (await readFile(argsFile, "utf8")).trim().split("\n");
+    const maps = args.flatMap((arg, i) => (args[i - 1] === "-map" ? [arg] : []));
+    // Capital V skips attached pictures (cover art); "?" makes both maps optional.
+    expect(maps).toEqual(["0:V:0?", "0:a:0?"]);
+    expect(args).not.toContain("0:v:0");
+  });
+
+  it("limits preview length (input -t) and x264 threads", async () => {
+    const argsFile = path.join(base, "args.txt");
+    const bin = await recordingBinary(argsFile);
+    const outDir = path.join(base, "out");
+    await mkdir(outDir);
+    const after = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
+    await createFfmpegRunner({ binary: bin })(
+      await media("v.webm"),
+      outDir,
+      new AbortController().signal,
+    );
+    const video = (await readFile(argsFile, "utf8")).trim().split("\n");
+    expect(after(video, "-t")).toBe("300");
+    expect(video.indexOf("-t")).toBeLessThan(video.indexOf("-i"));
+    expect(after(video, "-threads")).toBe("2");
+    await createFfmpegRunner({ binary: bin })(
+      await media("a.ogg"),
+      outDir,
+      new AbortController().signal,
+    );
+    const audio = (await readFile(argsFile, "utf8")).trim().split("\n");
+    expect(after(audio, "-t")).toBe("3000");
+    expect(audio.indexOf("-t")).toBeLessThan(audio.indexOf("-i"));
+    expect(audio).not.toContain("-threads");
   });
 
   it("refuses non-media input without spawning", async () => {
@@ -374,9 +427,10 @@ describe.skipIf(process.env.RUN_FFMPEG !== "1")("ffmpeg integration", () => {
       const [codec, width, height] = probe.split(",");
       const inSize = (await stat(input)).size;
       const outSize = (await stat(out)).size;
-      console.log(
-        `RUN_FFMPEG: input=${inSize} B output=${outSize} B codec=${codec} ${width}x${height} wall=${wallMs} ms`,
-      );
+      const line = `RUN_FFMPEG: input=${inSize} B output=${outSize} B codec=${codec} ${width}x${height} wall=${wallMs} ms`;
+      // Vitest hides console output of passing tests; RUN_FFMPEG_REPORT names a file to keep it.
+      const report = process.env.RUN_FFMPEG_REPORT;
+      if (report) await writeFile(report, `${line}\n`);
       expect(codec).toBe("h264");
       expect(Number(height)).toBeLessThanOrEqual(PREVIEW_MAX_HEIGHT);
       expect(Number(width) % 2).toBe(0);

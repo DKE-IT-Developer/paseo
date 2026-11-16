@@ -1,4 +1,8 @@
-import { CHAT_CARD_MAX_BYTES, DIRECT_PLAY_MAX_BYTES } from "../../shared/limits";
+import {
+  CHAT_CARD_MAX_BYTES,
+  DIRECT_PLAY_MAX_BYTES,
+  PREVIEW_MAX_SECONDS_VIDEO,
+} from "../../shared/limits";
 import { type CancelInput, JobCanceller } from "../panels/office-run";
 import { AbortedError, raceAbort, readAllChunks } from "../read-chunks";
 
@@ -50,6 +54,12 @@ export interface PlayResult {
 
 export function chooseSource(size: number, mode: PlayMode): PlaySource {
   return mode === "original" || size <= DIRECT_PLAY_MAX_BYTES ? "original" : "preview";
+}
+
+/** Meta text above a preview player; video previews are cut to the first minutes. */
+export function previewLabel(kind: PlayKind): string {
+  if (kind === "audio") return "Pratinjau";
+  return `Pratinjau · maks. ${Math.round(PREVIEW_MAX_SECONDS_VIDEO / 60)} menit pertama`;
 }
 
 function previewMime(kind: PlayKind): string {

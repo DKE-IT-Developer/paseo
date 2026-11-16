@@ -10,3 +10,6 @@ export const SHEET_MAX_COLS = 200;
 export const DIRECT_PLAY_MAX_BYTES = 4 * 1024 * 1024;
 export const PREVIEW_TIMEOUT_MS = 180_000;
 export const PREVIEW_MAX_HEIGHT = 540;
+/** Previews cover only the start of long files: bounds ffmpeg time and the preview size. */
+export const PREVIEW_MAX_SECONDS_VIDEO = 300;
+export const PREVIEW_MAX_SECONDS_AUDIO = 3000;

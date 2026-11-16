@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { CHAT_CARD_MAX_BYTES, DIRECT_PLAY_MAX_BYTES } from "../../shared/limits";
+import {
+  CHAT_CARD_MAX_BYTES,
+  DIRECT_PLAY_MAX_BYTES,
+  PREVIEW_MAX_SECONDS_VIDEO,
+} from "../../shared/limits";
 import { TooLargeError, isAbortError } from "../read-chunks";
 import {
   type PlayProgress,
   PlayController,
   type PlayRunDeps,
   chooseSource,
+  previewLabel,
   runPlay,
 } from "./play-run";
 
@@ -72,6 +77,16 @@ describe("chooseSource", () => {
     expect(chooseSource(DIRECT_PLAY_MAX_BYTES, "auto")).toBe("original");
     expect(chooseSource(DIRECT_PLAY_MAX_BYTES + 1, "auto")).toBe("preview");
     expect(chooseSource(DIRECT_PLAY_MAX_BYTES + 1, "original")).toBe("original");
+  });
+});
+
+describe("previewLabel", () => {
+  it("says video previews cover only the first minutes, derived from the limit", () => {
+    expect(previewLabel("video")).toBe(
+      `Pratinjau · maks. ${PREVIEW_MAX_SECONDS_VIDEO / 60} menit pertama`,
+    );
+    expect(previewLabel("video")).toBe("Pratinjau · maks. 5 menit pertama");
+    expect(previewLabel("audio")).toBe("Pratinjau");
   });
 });
 

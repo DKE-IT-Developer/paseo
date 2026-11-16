@@ -1,7 +1,11 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { fileKind } from "../shared/kinds";
-import { PREVIEW_MAX_HEIGHT } from "../shared/limits";
+import {
+  PREVIEW_MAX_HEIGHT,
+  PREVIEW_MAX_SECONDS_AUDIO,
+  PREVIEW_MAX_SECONDS_VIDEO,
+} from "../shared/limits";
 import {
   type ConversionQueue,
   type Converter,
@@ -44,16 +48,30 @@ export const PREVIEW_OUTPUT: QueueOutput = {
 };
 
 function ffmpegArgs(input: string, output: string): string[] {
-  // `file:` stops ffmpeg from reading a path as a protocol URL.
-  const head = ["-nostdin", "-hide_banner", "-loglevel", "error", "-i", `file:${input}`];
+  const audio = previewExt(input) === "mp3";
+  const seconds = audio ? PREVIEW_MAX_SECONDS_AUDIO : PREVIEW_MAX_SECONDS_VIDEO;
+  // Input-side -t: only the first part is decoded. `file:` stops ffmpeg from reading a path
+  // as a protocol URL.
+  const head = [
+    "-nostdin",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-t",
+    String(seconds),
+    "-i",
+    `file:${input}`,
+  ];
   const tail = ["-y", `file:${output}`];
-  if (previewExt(input) === "mp3") {
+  if (audio) {
     return [...head, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", ...tail];
   }
   return [
     ...head,
+    // Capital V skips attached pictures (cover art) and "?" allows audio-only "video" files;
+    // both then produce an AAC-only mp4.
     "-map",
-    "0:v:0",
+    "0:V:0?",
     "-map",
     "0:a:0?",
     // -2 keeps the width even; the height is rounded down to even too (yuv420p needs both).
@@ -61,6 +79,9 @@ function ffmpegArgs(input: string, output: string): string[] {
     `scale=-2:'min(${PREVIEW_MAX_HEIGHT},trunc(ih/2)*2)'`,
     "-c:v",
     "libx264",
+    // Leaves cores for the shared Mac's real-time services.
+    "-threads",
+    "2",
     "-preset",
     "veryfast",
     "-crf",
