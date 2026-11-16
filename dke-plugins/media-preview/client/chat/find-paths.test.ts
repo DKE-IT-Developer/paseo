@@ -62,6 +62,15 @@ describe("findMediaPaths", () => {
     ]);
   });
 
+  it("skips placeholder paths with an ellipsis segment", () => {
+    expect(
+      paths(
+        "contoh `/Users/itdke/content-creator/.../final.mp4` atau ~/…/a.mp3 dan /tmp/x/…/b.pdf",
+      ),
+    ).toEqual([]);
+    expect(paths("tapi `/tmp/real...name.mp3` tetap")).toEqual(["/tmp/real...name.mp3"]);
+  });
+
   it("returns [] for csv", () => {
     expect(findMediaPaths("data di /tmp/data.csv dan /tmp/notes.txt")).toEqual([]);
   });

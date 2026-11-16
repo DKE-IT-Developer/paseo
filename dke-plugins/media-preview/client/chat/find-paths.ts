@@ -36,6 +36,8 @@ function accept(candidate: string | null, seen: Set<string>, out: FoundMediaPath
   if (!candidate) return;
   const path = candidate.trim();
   if (!path.startsWith("/") && !path.startsWith("~/")) return;
+  // A segment that is only "..." or "…" is an example placeholder, not a real file.
+  if (path.split("/").some((segment) => segment === "..." || segment === "…")) return;
   const kind = fileKind(path);
   if (!kind || seen.has(path)) return;
   seen.add(path);

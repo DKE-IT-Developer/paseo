@@ -67,7 +67,8 @@ function describeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const name = error instanceof Error ? error.name : "";
   if (name === "PathNotAllowedError" || /tidak diizinkan/i.test(message)) {
-    return "Tidak bisa dibaca (di luar folder yang diizinkan)";
+    // The server answers "missing" and "outside the roots" alike (no existence oracle).
+    return "Tidak bisa dibaca (berkas tidak ada, atau di luar folder yang diizinkan)";
   }
   return message;
 }
