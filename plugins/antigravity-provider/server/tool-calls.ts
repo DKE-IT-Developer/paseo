@@ -14,6 +14,29 @@ const fileRead = z.object({
 });
 const fileWrite = z.object({ Path: z.string(), Content: z.string().optional() });
 const webSearch = z.object({ query: z.string() });
+const askQuestion = z.object({
+  questions: z
+    .array(
+      z.object({
+        question: z.string().min(1),
+        options: z.array(z.string()).default([]),
+        is_multi_select: z.boolean().optional(),
+      }),
+    )
+    .min(1),
+});
+
+/** agy's ask_question ends the turn while pending; the answer is the user's next prompt. */
+export const mapQuestion: NonNullable<AcpTransformer["question"]> = (call) => {
+  if (call.name !== "ask_question") return null;
+  const input = askQuestion.safeParse(call.input).data;
+  if (!input) return null;
+  return input.questions.map((q) => ({
+    question: q.question,
+    options: q.options,
+    multiSelect: q.is_multi_select === true,
+  }));
+};
 
 export const mapToolCall: NonNullable<AcpTransformer["toolCall"]> = (call, context) => {
   if (call.name?.startsWith("mcp_")) {

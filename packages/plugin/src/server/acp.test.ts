@@ -8,7 +8,7 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
@@ -7122,6 +7122,169 @@ describe("ACP tool call rows", () => {
       expect(configs.at(-1)).toBe("ask");
     } finally {
       await connection.close();
+    }
+  });
+});
+
+describe("ACP question tools (agy ask_question)", () => {
+  // agy reports ask_question as a pending tool call and ends the turn; the answer is the next prompt.
+  const askUpdates = (promptText: string) =>
+    promptText === "Tanya warna"
+      ? [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "ask-1",
+            title: "Run ask_question",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              questions: [
+                { question: "Warna?", options: ["Merah", "Biru"], is_multi_select: false },
+              ],
+            },
+          },
+        ]
+      : [];
+
+  async function setup() {
+    const harness = connectorHarness({ promptUpdates: askUpdates });
+    const registration = runAcpProvider({
+      id: "question-acp",
+      label: "Question ACP",
+      connector: harness.connector,
+      transformers: [
+        {
+          question(call) {
+            const input = call.input as {
+              questions?: Array<{ question: string; options: string[] }>;
+            };
+            return call.title === "Run ask_question" && input?.questions
+              ? input.questions.map((q) => ({ question: q.question, options: q.options }))
+              : null;
+          },
+        },
+      ],
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "permission"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    const prompt = (text: string, id: string) =>
+      connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: id,
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text }] },
+        },
+      });
+    const wirePrompts = () =>
+      harness.instances
+        .at(-1)!
+        .requests.filter((request) => request.method === "session/prompt")
+        .map(
+          (request) =>
+            (request.params as { prompt: Array<{ text?: string }> }).prompt[0]?.text ?? "",
+        );
+    const turnsCompleted = () =>
+      events.filter((event) => event.type === "session.turn" && event.state === "completed").length;
+    const resolved = () =>
+      events.some(
+        (event) =>
+          event.type === "session.permission_resolved" && event.permissionId === "question:ask-1",
+      );
+    await prompt("Tanya warna", "first");
+    await waitForEvent(
+      events,
+      (event) => event.type === "session.turn" && event.state === "completed",
+    );
+    return { connection, events, prompt, wirePrompts, turnsCompleted, resolved };
+  }
+
+  it("shows a live ask_question as a question card that outlives the ended turn", async () => {
+    const { connection, events } = await setup();
+    try {
+      const asked = events.find((event) => event.type === "session.permission");
+      expect(asked).toMatchObject({
+        type: "session.permission",
+        request: {
+          id: "question:ask-1",
+          kind: "question",
+          input: {
+            questions: [
+              {
+                header: "Question",
+                question: "Warna?",
+                options: [{ label: "Merah" }, { label: "Biru" }],
+                multiSelect: false,
+                isOther: true,
+              },
+            ],
+          },
+        },
+      });
+      expect(events.some((event) => event.type === "session.permission_resolved")).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("sends the card's answer to the agent as the next prompt", async () => {
+    const t = await setup();
+    try {
+      await t.connection.send({
+        type: "session.permission",
+        sessionId: "session-1",
+        permissionId: "question:ask-1",
+        response: { behavior: "allow", updatedInput: { answers: { Question: "Biru" } } },
+      });
+      await vi.waitFor(() => expect(t.turnsCompleted()).toBe(2));
+      expect(t.resolved()).toBe(true);
+      expect(t.wirePrompts()).toEqual(["Tanya warna", "Warna?\nBiru"]);
+      expect(
+        t.events.some(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "user_message" &&
+            event.item.text === "Warna?\nBiru",
+        ),
+      ).toBe(true);
+    } finally {
+      await t.connection.close();
+    }
+  });
+
+  it("closes the card when the user types the answer instead", async () => {
+    const t = await setup();
+    try {
+      await t.prompt("Ya biru", "typed");
+      await vi.waitFor(() => expect(t.turnsCompleted()).toBe(2));
+      expect(t.resolved()).toBe(true);
+      expect(t.wirePrompts()).toEqual(["Tanya warna", "Ya biru"]);
+    } finally {
+      await t.connection.close();
+    }
+  });
+
+  it("dismissing the card sends nothing to the agent", async () => {
+    const t = await setup();
+    try {
+      await t.connection.send({
+        type: "session.permission",
+        sessionId: "session-1",
+        permissionId: "question:ask-1",
+        response: { behavior: "deny", message: "Dismissed by user" },
+      });
+      await vi.waitFor(() => expect(t.resolved()).toBe(true));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(t.wirePrompts()).toEqual(["Tanya warna"]);
+    } finally {
+      await t.connection.close();
     }
   });
 });

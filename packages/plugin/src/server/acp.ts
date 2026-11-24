@@ -85,6 +85,13 @@ export interface AcpContext {
   sessionId: string;
 }
 
+/** One question a tool call asks the user (see AcpTransformer.question). */
+export interface AcpQuestion {
+  question: string;
+  options: readonly string[];
+  multiSelect?: boolean;
+}
+
 export interface AcpConfigAccess {
   read(): Promise<Readonly<Record<string, JsonValue>>>;
   set(id: string, value: JsonValue): Promise<void>;
@@ -155,6 +162,15 @@ export interface AcpTransformer {
     notification: { method: string; params: JsonValue },
     context: AcpContext,
   ): AcpVendorUpdate | readonly AcpVendorUpdate[] | null;
+  /**
+   * Recognizes a live tool call that asks the user questions and waits for the answer as the
+   * user's next prompt (e.g. Antigravity's ask_question, which ends the turn while pending).
+   * Paseo shows a question card; the answer is sent to the agent as a new prompt.
+   */
+  question?(
+    toolCall: AcpToolCallSnapshot,
+    context: AcpContext,
+  ): readonly AcpQuestion[] | null | undefined;
   /** Rewrites each update of a tool call, merged with the call's earlier updates. */
   toolCall?(
     toolCall: AcpToolCallSnapshot,

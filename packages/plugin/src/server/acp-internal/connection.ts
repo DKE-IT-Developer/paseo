@@ -28,6 +28,7 @@ import type {
   AcpConfigureContext,
   AcpRequest,
   AcpToolCallSnapshot,
+  AcpQuestion,
   AcpTransformer,
   AcpVendorUpdate,
   RunAcpProviderOptions,
@@ -47,6 +48,7 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
+  type ProviderPrompt,
   type ProviderLaunch,
   type ProviderModel,
   type ProviderPermissionResponse,
@@ -230,12 +232,20 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
       if (retired) retireSession(state, input.sessionId);
       return;
     }
-    case "session.permission":
-      requireSession(state, input.sessionId).runtime.respondToPermission(
-        input.permissionId,
-        input.response,
-      );
+    case "session.permission": {
+      const session = requireSession(state, input.sessionId);
+      const followUp = session.runtime.respondToPermission(input.permissionId, input.response);
+      if (followUp) {
+        await mutateSession(session, () =>
+          session.runtime.prompt({
+            type: "session.prompt",
+            sessionId: input.sessionId,
+            prompt: followUp,
+          }),
+        );
+      }
       return;
+    }
     case "session.configure": {
       const session = requireSession(state, input.sessionId);
       await mutateSession(session, () => session.runtime.configure(input.changes));
@@ -436,6 +446,8 @@ class AcpRuntime {
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
   private readonly permissions = new Map<string, PendingPermission>();
+  /** Open question cards (AcpTransformer.question), answered by the user's next prompt. */
+  private readonly questions = new Map<string, Array<AcpQuestion & { header: string }>>();
   private readonly transformers: readonly AcpTransformer[];
   private configOptions: SessionConfigOption[] = [];
   private modes: NewSessionResponse["modes"] = null;
@@ -741,6 +753,7 @@ class AcpRuntime {
     if (this.closing || this.processFailed || this.deferredRetirement) {
       throw new Error("ACP session is closed");
     }
+    this.closeQuestions();
     if (input.prompt.delivery === "steer") {
       this.steerDeferredPrompt(input);
       return;
@@ -939,7 +952,9 @@ class AcpRuntime {
   respondToPermission(
     permissionId: string,
     response: Extract<ProviderInput, { type: "session.permission" }>["response"],
-  ): void {
+  ): ProviderPrompt | undefined {
+    const questions = this.questions.get(permissionId);
+    if (questions) return this.answerQuestions(permissionId, questions, response);
     const pending = this.permissions.get(permissionId);
     if (!pending) return;
     const active = this.activePrompt;
@@ -1599,6 +1614,81 @@ class AcpRuntime {
     this.pendingCompactions.clear();
   }
 
+  private askQuestions(snapshot: AcpToolCallSnapshot): void {
+    const permissionId = `question:${snapshot.id}`;
+    if (this.questions.has(permissionId)) return;
+    const context = { sessionId: this.options.boundarySessionId };
+    let asked: readonly AcpQuestion[] | null | undefined;
+    for (const transformer of this.transformers) {
+      asked = transformer.question?.(snapshot, context);
+      if (asked?.length) break;
+    }
+    if (!asked?.length) return;
+    const questions = asked.map((question, index) => ({
+      question: question.question,
+      options: question.options,
+      multiSelect: question.multiSelect,
+      header: asked.length === 1 ? "Question" : `Question ${index + 1}`,
+    }));
+    this.questions.set(permissionId, questions);
+    this.emit({
+      type: "session.permission",
+      sessionId: this.options.boundarySessionId,
+      request: {
+        id: permissionId,
+        name: snapshot.name ?? "question",
+        kind: "question",
+        title: "Question",
+        input: {
+          questions: questions.map((question) => ({
+            header: question.header,
+            question: question.question,
+            options: question.options.map((label) => ({ label })),
+            multiSelect: question.multiSelect === true,
+            isOther: true,
+          })),
+        },
+      },
+    });
+  }
+
+  /** Closes the card; an answer becomes the next prompt, a dismissal sends nothing. */
+  private answerQuestions(
+    permissionId: string,
+    questions: Array<AcpQuestion & { header: string }>,
+    response: Extract<ProviderInput, { type: "session.permission" }>["response"],
+  ): ProviderPrompt | undefined {
+    this.resolveQuestion(permissionId);
+    if (response.behavior !== "allow") return undefined;
+    const answers = z
+      .record(z.string(), z.string())
+      .catch({})
+      .parse(response.updatedInput?.answers);
+    const text = questions
+      .map((question) =>
+        [question.question, answers[question.header]?.trim()].filter(Boolean).join("\n"),
+      )
+      .join("\n\n");
+    return {
+      clientMessageId: crypto.randomUUID(),
+      delivery: "auto",
+      input: { type: "message", content: [{ type: "text", text }] },
+    };
+  }
+
+  private closeQuestions(): void {
+    for (const permissionId of this.questions.keys()) this.resolveQuestion(permissionId);
+  }
+
+  private resolveQuestion(permissionId: string): void {
+    this.questions.delete(permissionId);
+    this.emit({
+      type: "session.permission_resolved",
+      sessionId: this.options.boundarySessionId,
+      permissionId,
+    });
+  }
+
   /** Merges an update into the call's earlier updates and runs it through the transformers. */
   private presentToolCall(update: ToolCall | ToolCallUpdate): AcpToolCallState {
     const tool = this.toolCalls.get(update.toolCallId);
@@ -1645,6 +1735,8 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       item: toolTimelineItem(snapshot),
     });
+    // Live only: replayed history must never reopen an old question.
+    if (this.replayWindow === null && isOpen) this.askQuestions(snapshot);
     const isOpenQualifying =
       this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
     this.noteDeferredToolTransition(wasOpenQualifying, isOpenQualifying, isOpen, snapshot, wireSeq);
